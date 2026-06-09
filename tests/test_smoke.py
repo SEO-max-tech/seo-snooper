@@ -156,11 +156,13 @@ class FakeQuery:
         if self._op == "insert":
             payload = (self._payload if isinstance(self._payload, list)
                        else [self._payload])
+            inserted = []
             for new in payload:
                 row = dict(new)
                 row.setdefault("id", len(rows) + 1)
                 rows.append(row)
-            return type("R", (), {"data": [dict(r) for r in payload]})()
+                inserted.append(dict(row))
+            return type("R", (), {"data": inserted})()
 
         matched = [r for r in rows if all(
             (r.get(c) in v) if isinstance(v, set) else r.get(c) == v
@@ -674,3 +676,152 @@ class TestNotify:
         send(None, card)
         out = capsys.readouterr().out
         assert json.loads(out)["cardsV2"]
+
+
+# ---------------------------------------------------------------- M8
+
+E2E_CONFIG = {
+    "settings": {"country": "us", "gap_threshold": 0.75,
+                 "partial_threshold": 0.85, "min_volume": 0,
+                 "ahrefs_max_keywords": 50,
+                 "embedding_model": "all-MiniLM-L6-v2",
+                 "request_timeout": 5, "user_agent": "test"},
+    "murf_taxonomy": TAXONOMY,
+    "murf": {"sitemap": "https://murf.ai/sitemap.xml",
+             "include_patterns": [], "exclude_patterns": []},
+    "competitors": [{"slug": "elevenlabs", "name": "ElevenLabs",
+                     "sitemaps": ["https://elevenlabs.io/sitemap.xml"],
+                     "include_patterns": [], "exclude_patterns": [],
+                     "active": True}],
+}
+
+MURF_SEGMENTS = {"https://murf.ai/tts-guide": {
+    "url": "https://murf.ai/tts-guide", "error": None,
+    "segments": [{"segment_index": 0, "segment_type": "page",
+                  "segment_text": "Guide to Text to Speech"}]}}
+
+
+class TestEndToEnd:
+    def _setup(self, monkeypatch, competitor_urls):
+        import main as m
+
+        state = {"cards": []}
+        monkeypatch.setattr(m, "_load_config", lambda: E2E_CONFIG)
+        monkeypatch.setattr(
+            m.sitemaps, "fetch_urls",
+            lambda sm, *a, **k: pd.DataFrame(
+                {"url": (["https://murf.ai/tts-guide"] if "murf.ai" in sm[0]
+                         else competitor_urls),
+                 "lastmod": pd.NaT}))
+        monkeypatch.setattr(m.extract, "fetch_segments",
+                            lambda urls, *a, **k: [MURF_SEGMENTS[u] for u in urls])
+        monkeypatch.setattr(
+            m.extract, "fetch_meta",
+            lambda urls, *a, **k: [
+                {"url": u, "title": "New Voice Topic", "h1": "New Voice Topic",
+                 "meta_description": "", "error": None,
+                 "topic_text": f"New Voice Topic {u}"} for u in urls])
+        monkeypatch.setattr(m.notify, "send",
+                            lambda url, card: state["cards"].append(card))
+        return m, state
+
+    def _args(self, **over):
+        import argparse
+        base = {"competitor": None, "dry_run": False}
+        base.update(over)
+        return argparse.Namespace(**base)
+
+    def test_first_run_baseline_then_alerting_run(self, monkeypatch):
+        sb = FakeSupabase()
+
+        # ---- run 1: baseline. No new URLs, no judge calls, no alerts.
+        m, state = self._setup(monkeypatch,
+                               ["https://elevenlabs.io/blog/a"])
+        client = FakeAnthropicClient([])        # must never be called
+        rc = m.run(self._args(), supabase=sb, model=FakeModel(),
+                   anthropic_client=client, provider=None)
+        assert rc == 0
+        assert client.prompts == []
+        assert "cm_alerts" not in sb.store or not sb.store["cm_alerts"]
+        assert "No new in-scope content gaps" in json.dumps(state["cards"][0])
+        # murf inventory got populated on first run
+        assert len(sb.store["cm_murf_inventory"]) == 1
+        baseline = [r for r in sb.store["cm_urls"]
+                    if r["competitor_slug"] == "elevenlabs"]
+        assert all(r["status"] == "baseline" for r in baseline)
+
+        # ---- run 2: one new competitor URL -> gap -> in-scope alert.
+        m, state = self._setup(monkeypatch, ["https://elevenlabs.io/blog/a",
+                                             "https://elevenlabs.io/blog/b"])
+        client = FakeAnthropicClient([GOOD_JSON])
+        from tools.ahrefs import StubProvider
+        rc = m.run(self._args(), supabase=sb, model=FakeModel(),
+                   anthropic_client=client, provider=StubProvider(50))
+        assert rc == 0
+        assert len(client.prompts) == 1          # only the new URL judged
+        alerts = sb.store["cm_alerts"]
+        assert len(alerts) == 1
+        assert alerts[0]["competitor_url"] == "https://elevenlabs.io/blog/b"
+        assert alerts[0]["bucket"] == "gap"
+        assert alerts[0]["target_keyword"] == "ai voice generator"
+        assert alerts[0]["volume"] is not None   # enriched by stub
+        card_text = json.dumps(state["cards"][0])
+        assert "New Voice Topic" in card_text
+        assert "STUB data" in card_text
+        # two runs recorded with stats
+        runs = sb.store["cm_runs"]
+        assert len(runs) == 2
+        assert runs[1]["stats"]["elevenlabs"]["new"] == 1
+        assert runs[1]["stats"]["elevenlabs"]["in_scope"] == 1
+
+    def test_dry_run_skips_alert_rows(self, monkeypatch):
+        sb = FakeSupabase()
+        m, state = self._setup(monkeypatch, ["https://elevenlabs.io/blog/a"])
+        m.run(self._args(), supabase=sb, model=FakeModel(),
+              anthropic_client=FakeAnthropicClient([]), provider=None)
+
+        m, state = self._setup(monkeypatch, ["https://elevenlabs.io/blog/a",
+                                             "https://elevenlabs.io/blog/b"])
+        from tools.ahrefs import StubProvider
+        rc = m.run(self._args(dry_run=True), supabase=sb, model=FakeModel(),
+                   anthropic_client=FakeAnthropicClient([GOOD_JSON]),
+                   provider=StubProvider(50))
+        assert rc == 0
+        assert not sb.store.get("cm_alerts")     # no alert rows
+        assert len(sb.store["cm_runs"]) == 2     # run still recorded
+        assert state["cards"]                    # card still built
+
+    def test_competitor_failure_isolated(self, monkeypatch):
+        sb = FakeSupabase()
+        m, state = self._setup(monkeypatch, ["https://elevenlabs.io/blog/a"])
+        cfg = {**E2E_CONFIG,
+               "competitors": E2E_CONFIG["competitors"] + [
+                   {"slug": "broken", "name": "Broken",
+                    "sitemaps": ["https://broken.io/sitemap.xml"],
+                    "active": True}]}
+        monkeypatch.setattr(m, "_load_config", lambda: cfg)
+
+        real_fetch = m.sitemaps.fetch_urls
+
+        def fetch(sm, *a, **k):
+            if "broken.io" in sm[0]:
+                raise RuntimeError("sitemap unreachable")
+            return real_fetch(sm, *a, **k)
+        monkeypatch.setattr(m.sitemaps, "fetch_urls", fetch)
+
+        rc = m.run(self._args(), supabase=sb, model=FakeModel(),
+                   anthropic_client=FakeAnthropicClient([]), provider=None)
+        assert rc == 0                           # one survivor -> not fatal
+        run_row = sb.store["cm_runs"][0]
+        assert "broken" in run_row["errors"]
+        assert "elevenlabs" in run_row["stats"]
+
+    def test_all_competitors_failing_hard_fails(self, monkeypatch):
+        sb = FakeSupabase()
+        m, state = self._setup(monkeypatch, [])
+        monkeypatch.setattr(m.sitemaps, "fetch_urls",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                RuntimeError("down")))
+        rc = m.run(self._args(), supabase=sb, model=FakeModel(),
+                   anthropic_client=FakeAnthropicClient([]), provider=None)
+        assert rc == 1
