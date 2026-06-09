@@ -558,3 +558,43 @@ class TestJudge:
 
         bad = GOOD_JSON.replace("listicle", "video")
         assert _parse(bad) is None
+
+
+# ---------------------------------------------------------------- M6
+
+class TestAhrefs:
+    def test_stub_selected_without_key(self, monkeypatch):
+        from tools.ahrefs import StubProvider, get_provider
+
+        monkeypatch.delenv("AHREFS_API_KEY", raising=False)
+        assert isinstance(get_provider(), StubProvider)
+
+    def test_real_selected_with_key(self, monkeypatch):
+        from tools.ahrefs import RealProvider, get_provider
+
+        monkeypatch.setenv("AHREFS_API_KEY", "k")
+        assert isinstance(get_provider(), RealProvider)
+
+    def test_stub_deterministic_and_complete(self):
+        from tools.ahrefs import StubProvider
+
+        stub = StubProvider(max_keywords=50)
+        kws = ["ai voice generator", "voice cloning software"]
+        a = stub.keyword_overview(kws, "us")
+        b = stub.keyword_overview(kws, "us")
+        assert a == b                       # deterministic
+        assert set(a) == set(kws)           # every keyword present
+        row = a["ai voice generator"]
+        assert isinstance(row["volume"], int)
+        assert 0 <= row["difficulty"] <= 100
+
+    def test_cap_returns_unenriched_overflow(self):
+        from tools.ahrefs import StubProvider
+
+        stub = StubProvider(max_keywords=2)
+        kws = [f"kw {i}" for i in range(5)]
+        out = stub.keyword_overview(kws, "us")
+        assert len(out) == 5
+        enriched = [k for k, v in out.items() if v["volume"] is not None]
+        assert len(enriched) == 2
+        assert out["kw 4"]["volume"] is None
