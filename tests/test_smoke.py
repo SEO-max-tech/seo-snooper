@@ -98,3 +98,132 @@ class TestSitemaps:
 
         out = apply_filters(pd.DataFrame(), ["/blog/"], EXCLUDES)
         assert out.empty and list(out.columns) == ["url", "lastmod"]
+
+
+# ---------------------------------------------------------------- fakes
+
+class FakeQuery:
+    """Chainable stand-in for supabase-py's query builder."""
+
+    def __init__(self, store: dict, table: str):
+        self.store, self.table_name = store, table
+        self._filters: list = []
+        self._range = (0, 10**9)
+        self._payload = None
+        self._op = "select"
+
+    def select(self, *_cols):
+        self._op = "select"
+        return self
+
+    def eq(self, col, val):
+        self._filters.append((col, val))
+        return self
+
+    def in_(self, col, vals):
+        self._filters.append((col, set(vals)))
+        return self
+
+    def range(self, lo, hi):
+        self._range = (lo, hi)
+        return self
+
+    def upsert(self, rows):
+        self._op, self._payload = "upsert", rows
+        return self
+
+    def insert(self, rows):
+        self._op, self._payload = "insert", rows
+        return self
+
+    def delete(self):
+        self._op = "delete"
+        return self
+
+    def execute(self):
+        rows = self.store.setdefault(self.table_name, [])
+        if self._op == "upsert":
+            payload = (self._payload if isinstance(self._payload, list)
+                       else [self._payload])
+            by_id = {r["id"]: r for r in rows if "id" in r}
+            for new in payload:
+                if new.get("id") in by_id:
+                    by_id[new["id"]].update(new)
+                else:
+                    rows.append(dict(new))
+            return type("R", (), {"data": payload})()
+        if self._op == "insert":
+            payload = (self._payload if isinstance(self._payload, list)
+                       else [self._payload])
+            for new in payload:
+                row = dict(new)
+                row.setdefault("id", len(rows) + 1)
+                rows.append(row)
+            return type("R", (), {"data": [dict(r) for r in payload]})()
+
+        matched = [r for r in rows if all(
+            (r.get(c) in v) if isinstance(v, set) else r.get(c) == v
+            for c, v in self._filters)]
+        if self._op == "delete":
+            self.store[self.table_name] = [r for r in rows if r not in matched]
+            return type("R", (), {"data": matched})()
+        lo, hi = self._range
+        return type("R", (), {"data": matched[lo:hi + 1]})()
+
+
+class FakeSupabase:
+    def __init__(self):
+        self.store: dict[str, list[dict]] = {}
+
+    def table(self, name):
+        return FakeQuery(self.store, name)
+
+
+# ---------------------------------------------------------------- M2
+
+class TestDiff:
+    def _df(self, urls):
+        return pd.DataFrame({"url": urls, "lastmod": pd.NaT})
+
+    def test_first_run_guard(self):
+        from tools.diff import detect_new
+
+        sb = FakeSupabase()
+        new = detect_new(sb, "elevenlabs", self._df(["https://a.com/1",
+                                                     "https://a.com/2"]))
+        assert new == []
+        rows = sb.store["cm_urls"]
+        assert len(rows) == 2
+        assert all(r["status"] == "baseline" for r in rows)
+
+    def test_second_run_detects_only_new(self):
+        from tools.diff import detect_new
+
+        sb = FakeSupabase()
+        detect_new(sb, "elevenlabs", self._df(["https://a.com/1"]))
+        new = detect_new(sb, "elevenlabs",
+                         self._df(["https://a.com/1", "https://a.com/2"]))
+        assert [n["url"] for n in new] == ["https://a.com/2"]
+        by_url = {r["url"]: r for r in sb.store["cm_urls"]}
+        assert by_url["https://a.com/2"]["status"] == "new"
+        assert by_url["https://a.com/1"]["status"] == "seen"
+
+    def test_competitors_are_isolated(self):
+        from tools.diff import detect_new
+
+        sb = FakeSupabase()
+        detect_new(sb, "elevenlabs", self._df(["https://a.com/1"]))
+        # same URL, different competitor -> still that competitor's baseline
+        new = detect_new(sb, "playht", self._df(["https://a.com/1"]))
+        assert new == []
+        slugs = {r["competitor_slug"] for r in sb.store["cm_urls"]}
+        assert slugs == {"elevenlabs", "playht"}
+
+    def test_stable_ids_no_duplicates_on_rerun(self):
+        from tools.diff import detect_new
+
+        sb = FakeSupabase()
+        detect_new(sb, "elevenlabs", self._df(["https://a.com/1"]))
+        detect_new(sb, "elevenlabs", self._df(["https://a.com/1"]))
+        detect_new(sb, "elevenlabs", self._df(["https://a.com/1"]))
+        assert len(sb.store["cm_urls"]) == 1
