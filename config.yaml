@@ -106,7 +106,7 @@ competitors:
       - https://www.ringcentral.com/us/en/blog/sitemap_index.xml
     include_patterns: []
     exclude_patterns: *default_excludes
-    active: true
+    active: false             # too broad (telecom, not voice-AI) — skipped
 
   - slug: lindy
     name: Lindy AI
