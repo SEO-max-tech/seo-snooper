@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://example.com/blog/ai-voice-cloning-guide/</loc>
+    <lastmod>2026-06-01T10:00:00+00:00</lastmod>
+  </url>
+  <url>
+    <loc>https://example.com/blog/text-to-speech-apps?utm_source=rss&amp;page=2</loc>
+    <lastmod>2026-06-02</lastmod>
+  </url>
+  <url>
+    <loc>https://example.com/blog/ai-voice-cloning-guide#section-2</loc>
+  </url>
+  <url>
+    <loc>https://example.com/de/blog/ki-stimmen</loc>
+    <lastmod>2026-06-03</lastmod>
+  </url>
+  <url>
+    <loc>https://example.com/customers/acme-corp</loc>
+  </url>
+  <url>
+    <loc>https://example.com/pricing</loc>
+  </url>
+</urlset>
