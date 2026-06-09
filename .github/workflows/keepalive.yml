@@ -1,0 +1,26 @@
+name: supabase-keepalive
+# Free-tier Supabase pauses after 7 days of inactivity (manual unpause
+# required). The weekly scan alone runs every 7 days — right at the edge.
+# This pings the REST API every 3 days so the project never idles long
+# enough to pause. One trivial SELECT, no dependencies.
+on:
+  schedule:
+    - cron: "0 6 */3 * *"   # every 3 days at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Supabase REST
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${SUPABASE_URL%/}/rest/v1/cm_runs?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}")
+          echo "Supabase responded: $code"
+          test "$code" = "200"
