@@ -9,7 +9,7 @@ settings:
   ahrefs_max_keywords: 50     # per-run credit guard
   embedding_model: all-MiniLM-L6-v2
   request_timeout: 20
-  user_agent: "MurfCompetitorMonitor/1.0"
+  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
 # Injected into the scope-judge prompt. Edit this when Murf ships/sunsets
 # a product — never edit prompts/scope_judge.md for taxonomy changes.

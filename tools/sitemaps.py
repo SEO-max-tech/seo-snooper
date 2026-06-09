@@ -77,11 +77,12 @@ def fetch_urls(sitemaps: list[str], include_patterns: list[str],
     """
     import advertools as adv
 
+    headers = {"User-Agent": user_agent}
     frames: list[pd.DataFrame] = []
     errors: list[str] = []
     for sm in sitemaps:
         try:
-            frames.append(adv.sitemap_to_df(sm))
+            frames.append(adv.sitemap_to_df(sm, request_headers=headers))
         except Exception as exc:  # noqa: BLE001 — per-sitemap isolation
             log.warning("sitemap fetch failed: %s (%s)", sm, exc)
             errors.append(f"{sm}: {exc}")
