@@ -64,14 +64,8 @@ competitors:
   - slug: bland
     name: Bland AI
     sitemaps:
-      - https://www.bland.ai/sitemap.xml
       - https://www.bland.ai/sitemap-blog.xml
-      - https://www.bland.ai/sitemap-customers.xml
-      - https://www.bland.ai/sitemap-integrations.xml
-      - https://www.bland.ai/sitemap-solutions.xml
-      - https://www.bland.ai/sitemap-industries.xml
-      - https://www.bland.ai/sitemap-comparisons.xml
-    include_patterns: []
+    include_patterns: ["/blog/"]    # blog only — rest is integration/solution noise
     exclude_patterns: *default_excludes
     active: true
 
