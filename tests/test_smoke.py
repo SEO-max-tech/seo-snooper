@@ -18,6 +18,7 @@ Must-have assertions:
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -598,3 +599,78 @@ class TestAhrefs:
         enriched = [k for k, v in out.items() if v["volume"] is not None]
         assert len(enriched) == 2
         assert out["kw 4"]["volume"] is None
+
+
+# ---------------------------------------------------------------- M7
+
+def _alert_item(**over):
+    base = {"competitor_slug": "elevenlabs", "competitor_name": "ElevenLabs",
+            "url": "https://elevenlabs.io/blog/x", "topic_text": "Topic X",
+            "bucket": "gap", "similarity": 0.55, "nearest_murf_url": None,
+            "target_keyword": "topic x", "volume": 900,
+            "keyword_difficulty": 30, "suggested_page_type": "blog"}
+    base.update(over)
+    return base
+
+
+class TestNotify:
+    def test_card_shape_and_grouping(self):
+        from tools.notify import build_card
+
+        items = [
+            _alert_item(),
+            _alert_item(url="https://elevenlabs.io/blog/y",
+                        topic_text="Topic Y", volume=5000),
+            _alert_item(competitor_slug="playht", competitor_name="PlayHT",
+                        url="https://play.ht/blog/z", topic_text="Topic Z"),
+        ]
+        card = build_card({"totals": {"new": 12, "gaps": 3}}, items, 100)
+        assert "cardsV2" in card
+        sections = card["cardsV2"][0]["card"]["sections"]
+        headers = [s.get("header", "") for s in sections]
+        assert any("ElevenLabs — 2" in h for h in headers)
+        assert any("PlayHT — 1" in h for h in headers)
+        # volume sort within competitor: 5000 first
+        el = next(s for s in sections if "ElevenLabs" in s.get("header", ""))
+        assert "Topic Y" in json.dumps(el["widgets"][0])
+
+    def test_low_volume_goes_to_footer(self):
+        from tools.notify import build_card
+
+        items = [_alert_item(), _alert_item(topic_text="Tiny topic",
+                                            url="https://e.io/t", volume=40)]
+        card = build_card({"totals": {}}, items, 100)
+        text = json.dumps(card)
+        sections = card["cardsV2"][0]["card"]["sections"]
+        main = json.dumps(sections[0])
+        assert "Tiny topic" not in main
+        assert "1 low-volume topic" in text
+
+    def test_partial_shows_similarity_and_nearest(self):
+        from tools.notify import build_card
+
+        items = [_alert_item(bucket="partial", similarity=0.81,
+                             nearest_murf_url="https://murf.ai/guide")]
+        text = json.dumps(build_card({"totals": {}}, items, 100))
+        assert "0.81" in text and "https://murf.ai/guide" in text
+
+    def test_empty_run_friendly_message(self):
+        from tools.notify import build_card
+
+        text = json.dumps(build_card({"totals": {}}, [], 100))
+        assert "No new in-scope content gaps" in text
+
+    def test_stub_data_flagged(self):
+        from tools.notify import build_card
+
+        text = json.dumps(build_card({"totals": {}, "stub_data": True},
+                                     [_alert_item()], 100))
+        assert "STUB data" in text
+
+    def test_send_dev_mode_prints(self, capsys):
+        from tools.notify import build_card, send
+
+        card = build_card({"totals": {}}, [_alert_item()], 100)
+        send(None, card)
+        out = capsys.readouterr().out
+        assert json.loads(out)["cardsV2"]
