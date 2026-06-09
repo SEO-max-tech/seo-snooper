@@ -1,0 +1,11 @@
+advertools>=0.16
+pandas>=2.0
+httpx>=0.27
+beautifulsoup4>=4.12
+tenacity>=8.2
+sentence-transformers>=3.0
+numpy>=1.26
+supabase>=2.4
+anthropic>=0.40
+pyyaml>=6.0
+pytest>=8.0

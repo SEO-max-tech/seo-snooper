@@ -1,0 +1,65 @@
+# competitor-monitor configuration
+# Secrets do NOT live here — see .env.example
+
+settings:
+  country: us                 # Ahrefs keyword country
+  gap_threshold: 0.75         # below = gap
+  partial_threshold: 0.85     # gap..partial = "partially covered"
+  min_volume: 100             # keywords below this go to collapsed footer
+  ahrefs_max_keywords: 50     # per-run credit guard
+  embedding_model: all-MiniLM-L6-v2
+  request_timeout: 20
+  user_agent: "MurfCompetitorMonitor/1.0"
+
+# Injected into the scope-judge prompt. Edit this when Murf ships/sunsets
+# a product — never edit prompts/scope_judge.md for taxonomy changes.
+murf_taxonomy:
+  in_scope:
+    - text to speech (TTS) / AI voice generator
+    - voice cloning
+    - voice changer
+    - AI Voice Agents
+    - Conversational AI
+    - AI SDR
+    - AI Recruiter
+    - AI Receptionist
+    - AI Answering Service
+    - AI Phone Agent
+    - AI Calling
+    - AI dubbing / localization
+    - voice changer
+    - AI voiceover for video, ads, e-learning, IVR
+    - speech-to-text adjacent workflows where voice output is the product
+  out_of_scope:
+    - AI video generation
+    - text/prompt to image generation
+    - music generation
+    - sound effects generation
+
+murf:
+  sitemap: https://murf.ai/public-assets/sitemaps/sitemap.xml
+  include_patterns: []        # empty = all
+  exclude_patterns:
+    - "/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"
+
+competitors:
+  - slug: elevenlabs
+    name: ElevenLabs
+    sitemaps:
+      - https://elevenlabs.io/sitemap.xml
+    include_patterns: []      # empty = all; or restrict e.g. ["/blog/"]
+    exclude_patterns:
+      - "/customers?/"
+      - "/case-stud"
+      - "/changelog"
+      - "/events?/"
+      - "/careers?/"
+      - "/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"
+    active: true
+
+  # - slug: playht
+  #   name: PlayHT
+  #   sitemaps: [https://play.ht/sitemap.xml]
+  #   include_patterns: []
+  #   exclude_patterns: ["/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"]
+  #   active: true
