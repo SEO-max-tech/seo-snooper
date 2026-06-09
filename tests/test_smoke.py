@@ -273,3 +273,198 @@ class TestExtract:
                          "https://example.com/empty")
         assert rec["error"] is not None
         assert rec["topic_text"] == ""
+
+
+# ---------------------------------------------------------------- M4
+
+import numpy as np  # noqa: E402
+
+
+class FakeModel:
+    """Deterministic 384d 'embeddings': text -> preset vector, else basis
+    vector seeded on the text hash."""
+
+    def __init__(self, preset: dict[str, np.ndarray] | None = None):
+        self.preset = preset or {}
+
+    def encode(self, texts):
+        out = []
+        for t in texts:
+            if t in self.preset:
+                out.append(self.preset[t])
+            else:
+                v = np.zeros(384, dtype=np.float32)
+                v[hash(t) % 384] = 1.0
+                out.append(v)
+        return np.vstack(out)
+
+
+def _vec_at_cosine(base: np.ndarray, cos: float) -> np.ndarray:
+    """Unit vector at exactly `cos` similarity to unit `base` (along dim 1)."""
+    ortho = np.zeros(384, dtype=np.float32)
+    ortho[1] = 1.0
+    return (cos * base + np.sqrt(1 - cos**2) * ortho).astype(np.float32)
+
+
+class TestGap:
+    def _inventory(self):
+        from tools.gap import Inventory
+
+        base = np.zeros(384, dtype=np.float32)
+        base[0] = 1.0
+        meta = [{"url": "https://murf.ai/resources/tts-guide",
+                 "segment_type": "section",
+                 "segment_text": "How text to speech works"}]
+        return Inventory(base.reshape(1, -1), meta), base
+
+    def test_buckets_at_thresholds(self):
+        from tools.gap import check
+
+        inv, base = self._inventory()
+        preset = {
+            "gap topic": _vec_at_cosine(base, 0.70),
+            "partial topic": _vec_at_cosine(base, 0.80),
+            "covered topic": _vec_at_cosine(base, 0.90),
+        }
+        model = FakeModel(preset)
+        items = [{"url": f"https://c.com/{k}", "topic_text": k}
+                 for k in preset]
+        out = check(model, inv, items, 0.75, 0.85)
+        buckets = {it["topic_text"]: it["bucket"] for it in out}
+        assert buckets == {"gap topic": "gap",
+                           "partial topic": "partial",
+                           "covered topic": "covered"}
+        sims = {it["topic_text"]: it["similarity"] for it in out}
+        assert abs(sims["partial topic"] - 0.80) < 1e-3
+
+    def test_nearest_murf_url_reported(self):
+        from tools.gap import check
+
+        inv, base = self._inventory()
+        model = FakeModel({"partial topic": _vec_at_cosine(base, 0.80)})
+        out = check(model, inv,
+                    [{"url": "https://c.com/x", "topic_text": "partial topic"}],
+                    0.75, 0.85)
+        assert out[0]["nearest_murf_url"] == "https://murf.ai/resources/tts-guide"
+        assert out[0]["nearest_segment_text"] == "How text to speech works"
+
+    def test_max_over_segments(self):
+        """Competitor page must match the BEST segment, not the page vector."""
+        from tools.gap import Inventory, check
+
+        page_vec = np.zeros(384, dtype=np.float32); page_vec[5] = 1.0
+        sect_vec = np.zeros(384, dtype=np.float32); sect_vec[0] = 1.0
+        inv = Inventory(np.vstack([page_vec, sect_vec]), [
+            {"url": "https://murf.ai/g", "segment_type": "page",
+             "segment_text": "Guide"},
+            {"url": "https://murf.ai/g", "segment_type": "section",
+             "segment_text": "Matching section"},
+        ])
+        model = FakeModel({"topic": _vec_at_cosine(sect_vec, 0.90)})
+        out = check(model, inv, [{"url": "https://c.com/t",
+                                  "topic_text": "topic"}], 0.75, 0.85)
+        assert out[0]["bucket"] == "covered"
+        assert out[0]["nearest_segment_text"] == "Matching section"
+
+    def test_empty_inventory_everything_gap(self):
+        from tools.gap import Inventory, check
+
+        inv = Inventory(np.empty((0, 384), dtype=np.float32), [])
+        out = check(FakeModel(), inv,
+                    [{"url": "https://c.com/x", "topic_text": "anything"}],
+                    0.75, 0.85)
+        assert out[0]["bucket"] == "gap" and out[0]["similarity"] == 0.0
+
+    def test_embedding_roundtrip_via_bytes(self):
+        """Storage encode/decode: float32 bytes -> hex -> matrix row."""
+        from tools.gap import Inventory, embed_texts
+
+        model = FakeModel()
+        vec = embed_texts(model, ["roundtrip"])[0]
+        sb = FakeSupabase()
+        sb.store["cm_murf_inventory"] = [{
+            "id": "x", "url": "https://murf.ai/p", "segment_type": "page",
+            "segment_text": "roundtrip", "content_hash": "h",
+            "embedding": "\\x" + vec.tobytes().hex(),
+        }]
+        inv = Inventory.load(sb)
+        assert len(inv) == 1
+        assert (inv.matrix @ vec).item() == pytest.approx(1.0)
+
+
+class TestRefreshInventory:
+    def _run(self, sb, monkeypatch, sitemap_urls, fetched, full=False):
+        import scripts.refresh_inventory as ri
+
+        monkeypatch.setattr(ri.sitemaps, "fetch_urls",
+                            lambda *a, **k: pd.DataFrame(
+                                {"url": sitemap_urls, "lastmod": pd.NaT}))
+        monkeypatch.setattr(ri.extract, "fetch_segments",
+                            lambda urls, *a, **k: [fetched[u] for u in urls])
+        config = {"murf": {"sitemap": "https://murf.ai/sitemap.xml",
+                           "include_patterns": [], "exclude_patterns": []},
+                  "settings": {"user_agent": "t", "request_timeout": 5}}
+        return ri.refresh(sb, FakeModel(), config, full=full)
+
+    def test_first_run_populates_then_incremental_noop(self, monkeypatch):
+        sb = FakeSupabase()
+        fetched = {"https://murf.ai/a": {
+            "url": "https://murf.ai/a", "error": None,
+            "segments": [{"segment_index": 0, "segment_type": "page",
+                          "segment_text": "A page"}]}}
+        stats = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched)
+        assert stats["segments_embedded"] == 1
+        assert len(sb.store["cm_murf_inventory"]) == 1
+
+        # incremental rerun: URL known + inventoried -> not even fetched
+        stats2 = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched)
+        assert stats2["urls_added"] == 0
+        assert stats2["segments_embedded"] == 0
+
+        # full rerun: re-fetched, but unchanged hash -> skip re-embed
+        stats3 = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched,
+                           full=True)
+        assert stats3["segments_embedded"] == 0
+        assert stats3["segments_skipped"] == 1
+
+        # content change -> re-embed under same stable id
+        fetched["https://murf.ai/a"]["segments"][0]["segment_text"] = "A page v2"
+        stats4 = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched,
+                           full=True)
+        assert stats4["segments_embedded"] == 1
+        assert len(sb.store["cm_murf_inventory"]) == 1   # upsert, no dupe
+
+    def test_vanished_url_pruned(self, monkeypatch):
+        sb = FakeSupabase()
+        fetched = {
+            "https://murf.ai/a": {"url": "https://murf.ai/a", "error": None,
+                                  "segments": [{"segment_index": 0,
+                                                "segment_type": "page",
+                                                "segment_text": "A"}]},
+            "https://murf.ai/b": {"url": "https://murf.ai/b", "error": None,
+                                  "segments": [{"segment_index": 0,
+                                                "segment_type": "page",
+                                                "segment_text": "B"}]},
+        }
+        self._run(sb, monkeypatch, ["https://murf.ai/a", "https://murf.ai/b"],
+                  fetched)
+        assert len(sb.store["cm_murf_inventory"]) == 2
+
+        stats = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched)
+        assert stats["removed"] == 1
+        urls = {r["url"] for r in sb.store["cm_murf_inventory"]}
+        assert urls == {"https://murf.ai/a"}
+
+    def test_failed_fetch_does_not_kill_batch(self, monkeypatch):
+        sb = FakeSupabase()
+        fetched = {
+            "https://murf.ai/ok": {"url": "https://murf.ai/ok", "error": None,
+                                   "segments": [{"segment_index": 0,
+                                                 "segment_type": "page",
+                                                 "segment_text": "OK"}]},
+            "https://murf.ai/bad": {"url": "https://murf.ai/bad",
+                                    "error": "HTTP 500"},
+        }
+        stats = self._run(sb, monkeypatch,
+                          ["https://murf.ai/ok", "https://murf.ai/bad"], fetched)
+        assert stats["segments_embedded"] == 1
