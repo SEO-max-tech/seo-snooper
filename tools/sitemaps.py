@@ -44,10 +44,17 @@ def apply_filters(df: pd.DataFrame, include_patterns: list[str],
         return pd.DataFrame(columns=["url", "lastmod"])
 
     url_col = "url" if "url" in df.columns else "loc"
+    # advertools emits NaN-loc rows for unreachable child sitemaps / errors;
+    # coerce to plain object strings and drop anything non-URL before mapping
+    src = df[[url_col]].copy()
+    src[url_col] = src[url_col].astype("object")
+    src = src[src[url_col].map(lambda v: isinstance(v, str) and v.strip() != "")]
+    lastmod = (pd.to_datetime(df.loc[src.index, "lastmod"],
+                              errors="coerce", utc=True)
+               if "lastmod" in df.columns else pd.Series(pd.NaT, index=src.index))
     out = pd.DataFrame({
-        "url": df[url_col].astype(str).map(_normalize_url),
-        "lastmod": pd.to_datetime(df["lastmod"], errors="coerce", utc=True)
-        if "lastmod" in df.columns else pd.NaT,
+        "url": src[url_col].map(_normalize_url).values,
+        "lastmod": lastmod.values,
     })
 
     if include_patterns:
