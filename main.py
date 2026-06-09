@@ -35,7 +35,9 @@ def _connect_supabase():
     from supabase import create_client
     from tenacity import retry, stop_after_attempt, wait_exponential
 
-    client = create_client(os.environ["SUPABASE_URL"],
+    # strip trailing slash — supabase-py appends '/rest/v1', a trailing
+    # slash yields '//rest/v1' which Kong rejects (PGRST125 invalid path)
+    client = create_client(os.environ["SUPABASE_URL"].rstrip("/"),
                            os.environ["SUPABASE_SERVICE_KEY"])
 
     @retry(stop=stop_after_attempt(3),

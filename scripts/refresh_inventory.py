@@ -145,7 +145,7 @@ def _main() -> int:
 
     config = yaml.safe_load(
         (Path(__file__).resolve().parents[1] / "config.yaml").read_text())
-    supabase = create_client(os.environ["SUPABASE_URL"],
+    supabase = create_client(os.environ["SUPABASE_URL"].rstrip("/"),
                              os.environ["SUPABASE_SERVICE_KEY"])
     model = SentenceTransformer(config["settings"]["embedding_model"])
     refresh(supabase, model, config, full=args.full)
