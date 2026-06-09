@@ -42,24 +42,125 @@ murf:
   exclude_patterns:
     - "/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"
 
+# Shared exclude set — anchor reused by every competitor below.
+# Strips case studies, changelogs, careers/events, and localized paths.
+default_excludes: &default_excludes
+  - "/customers?/"
+  - "/case-stud"
+  - "/changelog"
+  - "/events?/"
+  - "/careers?/"
+  - "/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"
+
 competitors:
   - slug: elevenlabs
     name: ElevenLabs
     sitemaps:
       - https://elevenlabs.io/sitemap.xml
     include_patterns: []      # empty = all; or restrict e.g. ["/blog/"]
-    exclude_patterns:
-      - "/customers?/"
-      - "/case-stud"
-      - "/changelog"
-      - "/events?/"
-      - "/careers?/"
-      - "/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"
+    exclude_patterns: *default_excludes
     active: true
 
-  # - slug: playht
-  #   name: PlayHT
-  #   sitemaps: [https://play.ht/sitemap.xml]
-  #   include_patterns: []
-  #   exclude_patterns: ["/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"]
-  #   active: true
+  - slug: bland
+    name: Bland AI
+    sitemaps:
+      - https://www.bland.ai/sitemap.xml
+      - https://www.bland.ai/sitemap-blog.xml
+      - https://www.bland.ai/sitemap-customers.xml
+      - https://www.bland.ai/sitemap-integrations.xml
+      - https://www.bland.ai/sitemap-solutions.xml
+      - https://www.bland.ai/sitemap-industries.xml
+      - https://www.bland.ai/sitemap-comparisons.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: retell
+    name: Retell AI
+    sitemaps:
+      - https://www.retellai.com/sitemap.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: vapi
+    name: Vapi AI
+    sitemaps:
+      - https://vapi.ai/sitemap.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: synthflow
+    name: Synthflow
+    sitemaps:
+      - https://synthflow.ai/sitemap.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: ringcentral
+    name: RingCentral
+    sitemaps:
+      - https://www.ringcentral.com/content/dam/rc-www/us/en/txt/sitemap.xml
+      - https://www.ringcentral.com/us/en/blog/sitemap_index.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: lindy
+    name: Lindy AI
+    sitemaps:
+      - https://lindy.com/en/sitemap_index.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: vellum
+    name: Vellum AI
+    sitemaps:
+      - https://www.vellum.ai/sitemap.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: yellowai
+    name: Yellow AI
+    sitemaps:
+      - https://yellow.ai/sitemap.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: assemblyai
+    name: AssemblyAI
+    sitemaps:
+      - https://www.assemblyai.com/sitemap.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: aircall
+    name: Aircall
+    sitemaps:
+      - https://aircall.io/sitemap-index.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: deepgram
+    name: Deepgram
+    sitemaps:
+      - https://deepgram.com/sitemap.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
+
+  - slug: bolna
+    name: Bolna AI
+    sitemaps:
+      - https://www.bolna.ai/sitemap-main.xml
+      - https://blog.bolna.ai/post-sitemap.xml
+    include_patterns: []
+    exclude_patterns: *default_excludes
+    active: true
