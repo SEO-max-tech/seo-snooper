@@ -227,3 +227,49 @@ class TestDiff:
         detect_new(sb, "elevenlabs", self._df(["https://a.com/1"]))
         detect_new(sb, "elevenlabs", self._df(["https://a.com/1"]))
         assert len(sb.store["cm_urls"]) == 1
+
+
+# ---------------------------------------------------------------- M3
+
+class TestExtract:
+    def test_competitor_meta(self):
+        from tools.extract import parse_meta
+
+        html = (FIXTURES / "competitor_page.html").read_text()
+        rec = parse_meta(html, "https://example.com/blog/best")
+        assert rec["error"] is None
+        assert rec["title"].startswith("10 Best AI Voice Generators")
+        # h1 from <main>, not the nav h2
+        assert rec["h1"] == "The 10 Best AI Voice Generators (Tested in 2026)"
+        assert rec["meta_description"].startswith("We tested")
+        assert rec["topic_text"] == f"{rec['title']} — {rec['h1']}"
+
+    def test_inventory_segments(self):
+        from tools.extract import parse_segments
+
+        html = (FIXTURES / "murf_guide.html").read_text()
+        rec = parse_segments(html, "https://murf.ai/resources/tts-guide")
+        assert rec["error"] is None
+        segs = rec["segments"]
+        assert segs[0]["segment_type"] == "page"
+        assert segs[0]["segment_index"] == 0
+        assert "Complete Guide to Text to Speech" in segs[0]["segment_text"]
+        sections = [s for s in segs if s["segment_type"] == "section"]
+        assert len(sections) == 3
+        # h3s appended to their h2
+        assert sections[0]["segment_text"] == (
+            "How text to speech works: Neural TTS models / Voice synthesis pipeline")
+        assert sections[1]["segment_text"] == (
+            "Best use cases for TTS: E-learning narration")
+        # h2 with no h3s stays bare
+        assert sections[2]["segment_text"] == "Choosing a TTS voice"
+        # nav h2 ("Site navigation") never appears — main-scope only
+        assert all("navigation" not in s["segment_text"].lower() for s in segs)
+
+    def test_no_headings_is_error_record(self):
+        from tools.extract import parse_meta
+
+        rec = parse_meta("<html><body><p>nothing</p></body></html>",
+                         "https://example.com/empty")
+        assert rec["error"] is not None
+        assert rec["topic_text"] == ""
