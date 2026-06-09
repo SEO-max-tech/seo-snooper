@@ -239,13 +239,38 @@ class TestExtract:
         from tools.extract import parse_meta
 
         html = (FIXTURES / "competitor_page.html").read_text()
-        rec = parse_meta(html, "https://example.com/blog/best")
+        rec = parse_meta(html, "https://examplelabs.com/blog/best")
         assert rec["error"] is None
         assert rec["title"].startswith("10 Best AI Voice Generators")
         # h1 from <main>, not the nav h2
         assert rec["h1"] == "The 10 Best AI Voice Generators (Tested in 2026)"
         assert rec["meta_description"].startswith("We tested")
-        assert rec["topic_text"] == f"{rec['title']} — {rec['h1']}"
+        # brand segment 'ExampleLabs' stripped from the title; h1 kept
+        assert "ExampleLabs" not in rec["topic_text"]
+        assert "10 Best AI Voice Generators in 2026" in rec["topic_text"]
+        assert rec["h1"] in rec["topic_text"]
+
+    def test_title_cleaning_strips_brand_and_dedupes(self):
+        from tools.extract import _page_topic
+
+        # the real Bolna case that mis-bucketed as 'partial'
+        title = ("AI Voice Agents for Healthcare | Patient Calls & Scheduling "
+                 "| Bolna | Bolna Voice AI")
+        h1 = "AI Voice Agents for Healthcare"
+        topic = _page_topic(title, h1, "https://www.bolna.ai/healthcare")
+        assert "Bolna" not in topic                     # brand gone
+        assert topic.startswith("AI Voice Agents for Healthcare")
+        # h1 duplicate of lead segment collapsed, descriptor retained
+        assert topic == ("AI Voice Agents for Healthcare — "
+                         "Patient Calls & Scheduling")
+
+    def test_title_cleaning_all_brand_falls_back(self):
+        from tools.extract import _page_topic
+
+        # pathological: title is only the brand — keep the lead, use h1
+        topic = _page_topic("Bolna | Bolna Voice AI", "Pricing",
+                            "https://www.bolna.ai/pricing")
+        assert "Pricing" in topic
 
     def test_inventory_segments(self):
         from tools.extract import parse_segments

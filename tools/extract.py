@@ -22,10 +22,49 @@ from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
 log = logging.getLogger(__name__)
 
 _WS = re.compile(r"\s+")
+# SEO title separators: pipe, bullets, chevrons, en/em dash, spaced hyphen
+_TITLE_SEP = re.compile(r"\s*[|•·›»–—]\s*|\s+-\s+")
 
 
 def _clean(text: str | None) -> str:
     return _WS.sub(" ", text).strip() if text else ""
+
+
+def _brand_token(url: str) -> str:
+    """Second-level domain label, e.g. https://www.bolna.ai -> 'bolna'."""
+    from urllib.parse import urlsplit
+
+    host = urlsplit(url).netloc.split(":")[0]
+    labels = [l for l in host.split(".") if l and l != "www"]
+    return labels[-2].lower() if len(labels) >= 2 else (labels[0].lower()
+                                                        if labels else "")
+
+
+def _page_topic(title: str, h1: str, url: str) -> str:
+    """Build a denoised topic string from <title> + <h1>.
+
+    SEO titles carry brand boilerplate ('Real Title | Tagline | Brand') that
+    dilutes embeddings and pushes genuinely-covered topics into the 'partial'
+    band. Drop title segments containing the site's brand token, then dedupe
+    the remaining segments against the H1 (substring-aware) so the vector
+    reflects the actual topic, not the brand.
+    """
+    brand = _brand_token(url)
+    segs = [s.strip() for s in _TITLE_SEP.split(title) if s.strip()]
+    kept = [s for s in segs if brand and brand not in s.lower()]
+    if not kept:                      # title was all-brand — fall back to lead
+        kept = segs[:1]
+
+    parts: list[str] = []
+    for cand in kept + ([h1] if h1 else []):
+        cl = cand.lower()
+        # skip if already represented by a kept (longer) segment
+        if any(cl in p.lower() for p in parts):
+            continue
+        # drop kept segments that are substrings of this richer candidate
+        parts = [p for p in parts if p.lower() not in cl]
+        parts.append(cand)
+    return " — ".join(parts)
 
 
 @retry(retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)),
@@ -55,14 +94,14 @@ def parse_meta(html: str, url: str) -> dict:
     h1 = _clean(h1_el.get_text() if h1_el else "")
     md_el = soup.find("meta", attrs={"name": "description"})
     meta_description = _clean(md_el.get("content") if md_el else "")
-    topic_parts = [p for p in (title, h1) if p]
+    topic_text = _page_topic(title, h1, url)
     return {
         "url": url,
         "title": title,
         "h1": h1,
         "meta_description": meta_description,
-        "topic_text": " — ".join(topic_parts),
-        "error": None if topic_parts else "no title or h1 found",
+        "topic_text": topic_text,
+        "error": None if topic_text else "no title or h1 found",
     }
 
 
@@ -79,7 +118,7 @@ def parse_segments(html: str, url: str) -> dict:
     h1 = _clean(h1_el.get_text() if h1_el else "")
 
     segments = []
-    page_text = " — ".join(p for p in (title, h1) if p)
+    page_text = _page_topic(title, h1, url)
     if page_text:
         segments.append({"segment_index": 0, "segment_type": "page",
                          "segment_text": page_text})
