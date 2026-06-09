@@ -468,3 +468,93 @@ class TestRefreshInventory:
         stats = self._run(sb, monkeypatch,
                           ["https://murf.ai/ok", "https://murf.ai/bad"], fetched)
         assert stats["segments_embedded"] == 1
+
+
+# ---------------------------------------------------------------- M5
+
+GOOD_JSON = ('{"in_scope": true, "reason": "voice topic", '
+             '"target_keyword": "ai voice generator", '
+             '"suggested_page_type": "listicle", "confidence": "high"}')
+
+TAXONOMY = {"in_scope": ["text to speech", "voice cloning"],
+            "out_of_scope": ["AI video generation", "music generation"]}
+
+ITEM = {"topic_text": "Best AI Voice Generators — tested",
+        "url": "https://c.com/best-voices", "bucket": "partial",
+        "nearest_segment_text": "How text to speech works"}
+
+
+class FakeAnthropicClient:
+    """Returns queued raw responses in order; records prompts."""
+
+    def __init__(self, responses: list[str]):
+        self._queue = list(responses)
+        self.prompts: list[str] = []
+        outer = self
+
+        class _Messages:
+            def create(self, model, max_tokens, messages):
+                outer.prompts.append(messages[0]["content"])
+                raw = outer._queue.pop(0)
+                block = type("B", (), {"text": raw})()
+                return type("R", (), {"content": [block]})()
+
+        self.messages = _Messages()
+
+
+class TestJudge:
+    def test_valid_json_passthrough(self):
+        from tools.judge import evaluate
+
+        client = FakeAnthropicClient([GOOD_JSON])
+        out = evaluate(client, "claude-haiku-4-5", TAXONOMY, ITEM)
+        assert out["in_scope"] is True
+        assert out["target_keyword"] == "ai voice generator"
+        assert out["suggested_page_type"] == "listicle"
+        # original item fields preserved
+        assert out["url"] == ITEM["url"] and out["bucket"] == "partial"
+
+    def test_taxonomy_injected_not_hardcoded(self):
+        from tools.judge import evaluate
+
+        client = FakeAnthropicClient([GOOD_JSON])
+        evaluate(client, "m", TAXONOMY, ITEM)
+        prompt = client.prompts[0]
+        assert "- voice cloning" in prompt
+        assert "- music generation" in prompt
+        assert "{in_scope_taxonomy}" not in prompt
+        assert ITEM["topic_text"] in prompt
+        # partial bucket -> nearest Murf context included
+        assert "How text to speech works" in prompt
+
+    def test_retry_once_then_success(self):
+        from tools.judge import evaluate
+
+        client = FakeAnthropicClient(["not json at all", GOOD_JSON])
+        out = evaluate(client, "m", TAXONOMY, ITEM)
+        assert len(client.prompts) == 2
+        assert out["in_scope"] is True
+        assert out["reason"] == "voice topic"
+
+    def test_fail_open_on_double_malformed(self):
+        from tools.judge import evaluate
+
+        client = FakeAnthropicClient(["garbage", '{"in_scope": "yes"}'])
+        out = evaluate(client, "m", TAXONOMY, ITEM)
+        assert len(client.prompts) == 2          # exactly one retry
+        assert out["in_scope"] is True
+        assert out["confidence"] == "low"
+        assert out["reason"] == "judge_parse_failure"
+
+    def test_markdown_fenced_json_tolerated(self):
+        from tools.judge import evaluate
+
+        client = FakeAnthropicClient(["```json\n" + GOOD_JSON + "\n```"])
+        out = evaluate(client, "m", TAXONOMY, ITEM)
+        assert out["target_keyword"] == "ai voice generator"
+
+    def test_invalid_enum_rejected(self):
+        from tools.judge import _parse
+
+        bad = GOOD_JSON.replace("listicle", "video")
+        assert _parse(bad) is None
