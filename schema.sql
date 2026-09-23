@@ -16,6 +16,7 @@ create table if not exists cm_site_inventory (
   id text primary key,                      -- md5(url || '|' || segment_index)
   url text not null,
   segment_type text not null,               -- 'page' (title+h1) | 'section' (h2+h3s)
+                                            -- | 'empty' (tombstone: fetched, no headings)
   segment_text text not null,
   content_hash text not null,               -- md5(segment_text) for change detection
   embedding bytea not null,                 -- np.float32[384], all-MiniLM-L6-v2

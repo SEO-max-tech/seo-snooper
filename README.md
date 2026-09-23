@@ -230,6 +230,7 @@ in a couple of minutes.
 | `min_volume` | `100` | Monthly searches below this go to the footer instead of the main list |
 | `ahrefs_max_keywords` | `50` | Hard cap on keyword lookups per run |
 | `request_timeout` | `20` | Per-page fetch timeout, seconds |
+| `inventory_recheck_days` | `30` | How often to re-fetch your own pages that had no headings last time, in case they gained some |
 | `embedding_model` | `all-MiniLM-L6-v2` | Any sentence-transformers model. Changing it invalidates stored vectors — delete `cm_site_inventory` and let it rebuild |
 
 Getting too much noise? Tighten `taxonomy.out_of_scope` first — it's cheaper

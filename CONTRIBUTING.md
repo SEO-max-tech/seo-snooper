@@ -49,8 +49,6 @@ interface like `tools/ahrefs.py` instead.
 
 Happy to take fixes for any of these:
 
-- Pages on your own site with no headings never land in `cm_site_inventory`,
-  so they get re-fetched on every run. Harmless but wasteful.
 - The judge fails *open* — a URL whose JSON can't be parsed twice is reported
   rather than dropped. Deliberate, but it does mean parse failures surface as
   report noise.

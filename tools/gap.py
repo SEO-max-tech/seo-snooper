@@ -14,6 +14,11 @@ log = logging.getLogger(__name__)
 
 DIM = 384
 
+# Sentinel segment_type written by scripts/refresh_inventory.py for a URL
+# that fetched fine but has no headings at all. It carries a zero vector and
+# is filtered out below so it can never be a nearest match.
+EMPTY_SEGMENT = "empty"
+
 
 class Inventory:
     """Holds (matrix: np.ndarray[N,384] normalized, meta: list[{url,
@@ -35,7 +40,8 @@ class Inventory:
                     .select("url,segment_type,segment_text,embedding")
                     .range(offset, offset + page - 1).execute())
             batch = resp.data or []
-            rows.extend(batch)
+            rows.extend(r for r in batch
+                        if r.get("segment_type") != EMPTY_SEGMENT)
             if len(batch) < page:
                 break
             offset += page
