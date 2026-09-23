@@ -13,21 +13,21 @@ Weekly competitor content-gap report
 47 new URLs · 9 gaps · 3 alert(s)
 ============================================================
 
-ElevenLabs — 2 topic(s) we don't cover
+Asana — 2 topic(s) we don't cover
 ------------------------------------------------------------
-  [GAP] AI Dubbing Workflow for Video Teams
-      https://elevenlabs.io/blog/ai-dubbing-workflow
-      Keyword: ai dubbing workflow · Volume: 2,400 · KD: 24 · Format: Blog post
-  [PARTIAL] Voice Cloning Ethics and Consent
-      https://elevenlabs.io/blog/voice-cloning-ethics
-      Keyword: voice cloning ethics · Volume: 880 · KD: 18 · Format: Blog post
-      Partially covered (sim 0.82) — nearest: https://yoursite.com/guides/voice-cloning
+  [GAP] Sprint Retrospective Templates That Teams Actually Use
+      https://asana.com/resources/sprint-retrospective-template
+      Keyword: sprint retrospective template · Volume: 2,400 · KD: 24 · Format: Blog post
+  [PARTIAL] Resource Capacity Planning for Agencies
+      https://asana.com/resources/capacity-planning
+      Keyword: resource capacity planning · Volume: 880 · KD: 18 · Format: Blog post
+      Partially covered (sim 0.82) — nearest: https://yoursite.com/guides/resource-planning
 
-Retell AI — 1 topic(s) we don't cover
+Monday.com — 1 topic(s) we don't cover
 ------------------------------------------------------------
-  [GAP] AI Receptionist Pricing Compared
-      https://www.retellai.com/blog/ai-receptionist-pricing
-      Keyword: ai receptionist pricing · Volume: 1,600 · KD: 31 · Format: Listicle
+  [GAP] Best Gantt Chart Software Compared
+      https://monday.com/blog/gantt-chart-software
+      Keyword: gantt chart software · Volume: 1,600 · KD: 31 · Format: Listicle
 
 ------------------------------------------------------------
   1 low-volume topic(s) (<100/mo) suppressed — see the cm_alerts table for the full list.
@@ -46,9 +46,9 @@ A raw "new URLs this week" feed is noise. Three filters make it useful:
 embedded as *multiple* vectors — one for the page (title + H1) and one per
 H2 section (with its H3s as context). Competitor pages get a single vector.
 A gap score is the max cosine across all of them, so a competitor's dedicated
-post on "voice cloning ethics" correctly matches the *section* about ethics
-buried inside your 4,000-word voice cloning guide, and doesn't get reported
-as a gap.
+post on "resource capacity planning" correctly matches the *section* on
+capacity buried inside your 4,000-word resource planning guide, and isn't
+reported as a gap.
 
 Three buckets fall out: below `gap_threshold` is a **gap**, between the two
 thresholds is **partial** (reported with the nearest matching page of yours,
@@ -104,9 +104,9 @@ Leave the rest empty for now — the report will print to your terminal.
 
 ### 4. Describe your site
 
-Edit [`config.yaml`](config.yaml). It ships as a complete working example
-monitoring the AI-voice market, so you can see the shape of a real setup.
-Three blocks to change:
+Edit [`config.yaml`](config.yaml). **It ships as a template — every value
+in it is a placeholder, and the example sitemaps point at `example.com`
+on purpose.** Three blocks to fill in:
 
 ```yaml
 site:

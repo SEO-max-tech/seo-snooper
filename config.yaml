@@ -1,9 +1,9 @@
 # ─────────────────────────────────────────────────────────────────────────
 # SEO Snooper configuration
 #
-# This ships as a COMPLETE WORKING EXAMPLE monitoring the AI-voice vertical.
-# To use it for your own site, change the `site:` block and `taxonomy:`
-# block to describe your product, then replace the `competitors:` list.
+# THIS FILE IS A TEMPLATE. Every value below is a placeholder — edit the
+# `site:`, `taxonomy:` and `competitors:` blocks before your first run.
+# (Placeholder sitemaps point at example.com and will fail on purpose.)
 #
 # Secrets do NOT live here — see .env.example
 # ─────────────────────────────────────────────────────────────────────────
@@ -22,38 +22,33 @@ settings:
 # The site being defended. Its sitemap is crawled, embedded, and used as
 # the "do we already cover this?" reference corpus.
 site:
-  slug: murf                  # stable storage key — changing it re-baselines
-  name: Murf                  # injected into the scope-judge prompt
-  description: an AI voice platform
-  sitemap: https://murf.ai/public-assets/sitemaps/sitemap.xml
+  slug: acme                  # stable storage key — changing it re-baselines
+  name: Acme                  # injected into the scope-judge prompt
+  description: a project management platform   # "<Name> is <description>"
+  sitemap: https://acme.example/sitemap.xml
   include_patterns: []        # empty = all
   exclude_patterns:
+    # Localized paths are usually duplicate content — skip them.
     - "/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"
 
 # ─── PRODUCT SCOPE ───────────────────────────────────────────────────────
 # Injected into prompts/scope_judge.md at runtime. Edit this when you ship
 # or sunset a product — never edit the prompt file for taxonomy changes.
+#
+# Be specific. Vague taxonomies let noise through, and `out_of_scope`
+# matters as much as `in_scope` — it is how you stop a competitor's
+# adjacent product line from generating useless suggestions every week.
 taxonomy:
   in_scope:
-    - text to speech (TTS) / AI voice generator
-    - voice cloning
-    - voice changer
-    - AI Voice Agents
-    - Conversational AI
-    - AI SDR
-    - AI Recruiter
-    - AI Receptionist
-    - AI Answering Service
-    - AI Phone Agent
-    - AI Calling
-    - AI dubbing / localization
-    - AI voiceover for video, ads, e-learning, IVR
-    - speech-to-text adjacent workflows where voice output is the product
+    - project management software
+    - team collaboration and workflows
+    - task tracking and kanban boards
+    - gantt charts, timelines and resource planning
+    - agile and sprint planning practice
   out_of_scope:
-    - AI video generation
-    - text/prompt to image generation
-    - music generation
-    - sound effects generation
+    - accounting and invoicing software
+    - CRM and sales pipeline tools
+    - HR and payroll systems
 
 # ─── COMPETITORS ─────────────────────────────────────────────────────────
 # Shared exclude set — YAML anchor reused by every competitor below.
@@ -67,108 +62,42 @@ default_excludes: &default_excludes
   - "/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"
 
 competitors:
-  - slug: elevenlabs
-    name: ElevenLabs
+  # Most sites: point at the sitemap index and let the excludes do the work.
+  - slug: competitor-one
+    name: Competitor One
     sitemaps:
-      - https://elevenlabs.io/sitemap.xml
-    include_patterns: []      # empty = all; or restrict e.g. ["/blog/"]
+      - https://competitor-one.example/sitemap.xml
+    include_patterns: []      # empty = all
     exclude_patterns: *default_excludes
     active: true
 
-  - slug: bland
-    name: Bland AI
+  # Some sites bury good content under a wall of templated product and
+  # integration pages. Restrict those to the blog with include_patterns.
+  - slug: competitor-two
+    name: Competitor Two
     sitemaps:
-      - https://www.bland.ai/sitemap-blog.xml
-    include_patterns: ["/blog/"]    # blog only — rest is integration noise
+      - https://competitor-two.example/sitemap-blog.xml
+    include_patterns: ["/blog/"]
     exclude_patterns: *default_excludes
     active: true
 
-  - slug: retell
-    name: Retell AI
+  # Multiple sitemaps are concatenated; one unreachable sitemap is skipped
+  # rather than failing the competitor.
+  - slug: competitor-three
+    name: Competitor Three
     sitemaps:
-      - https://www.retellai.com/sitemap.xml
+      - https://competitor-three.example/sitemap-main.xml
+      - https://blog.competitor-three.example/post-sitemap.xml
     include_patterns: []
     exclude_patterns: *default_excludes
     active: true
 
-  - slug: vapi
-    name: Vapi AI
+  # Set active: false to keep a competitor's config around without
+  # scanning it — useful when one turns out to be too broad to be signal.
+  - slug: competitor-four
+    name: Competitor Four
     sitemaps:
-      - https://vapi.ai/sitemap.xml
+      - https://competitor-four.example/sitemap_index.xml
     include_patterns: []
     exclude_patterns: *default_excludes
-    active: true
-
-  - slug: synthflow
-    name: Synthflow
-    sitemaps:
-      - https://synthflow.ai/sitemap.xml
-    include_patterns: []
-    exclude_patterns: *default_excludes
-    active: true
-
-  - slug: ringcentral
-    name: RingCentral
-    sitemaps:
-      - https://www.ringcentral.com/content/dam/rc-www/us/en/txt/sitemap.xml
-      - https://www.ringcentral.com/us/en/blog/sitemap_index.xml
-    include_patterns: []
-    exclude_patterns: *default_excludes
-    active: false             # too broad (telecom, not voice-AI) — skipped
-
-  - slug: lindy
-    name: Lindy AI
-    sitemaps:
-      - https://lindy.com/en/sitemap_index.xml
-    include_patterns: []
-    exclude_patterns: *default_excludes
-    active: true
-
-  - slug: vellum
-    name: Vellum AI
-    sitemaps:
-      - https://www.vellum.ai/sitemap.xml
-    include_patterns: []
-    exclude_patterns: *default_excludes
-    active: true
-
-  - slug: yellowai
-    name: Yellow AI
-    sitemaps:
-      - https://yellow.ai/sitemap.xml
-    include_patterns: []
-    exclude_patterns: *default_excludes
-    active: true
-
-  - slug: assemblyai
-    name: AssemblyAI
-    sitemaps:
-      - https://www.assemblyai.com/sitemap.xml
-    include_patterns: []
-    exclude_patterns: *default_excludes
-    active: true
-
-  - slug: aircall
-    name: Aircall
-    sitemaps:
-      - https://aircall.io/sitemap-index.xml
-    include_patterns: []
-    exclude_patterns: *default_excludes
-    active: true
-
-  - slug: deepgram
-    name: Deepgram
-    sitemaps:
-      - https://deepgram.com/sitemap.xml
-    include_patterns: []
-    exclude_patterns: *default_excludes
-    active: true
-
-  - slug: bolna
-    name: Bolna AI
-    sitemaps:
-      - https://www.bolna.ai/sitemap-main.xml
-      - https://blog.bolna.ai/post-sitemap.xml
-    include_patterns: []
-    exclude_patterns: *default_excludes
-    active: true
+    active: false
