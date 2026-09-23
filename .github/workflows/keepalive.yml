@@ -15,10 +15,15 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Ping Supabase REST
+        # Self-skips when unconfigured, same as the weekly scan.
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "::notice::No SUPABASE_URL secret — nothing to keep alive."
+            exit 0
+          fi
           code=$(curl -s -o /dev/null -w "%{http_code}" \
             "${SUPABASE_URL%/}/rest/v1/cm_runs?select=id&limit=1" \
             -H "apikey: ${SUPABASE_SERVICE_KEY}" \
