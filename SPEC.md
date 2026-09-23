@@ -104,6 +104,16 @@ and is the right thing to read before changing pipeline behaviour.
   vector (title + H1). Gap = max cosine across all own-site vectors. This
   lets a competitor's dedicated page match a section inside a broader guide
   of yours.
+- **Headless own-site pages are tombstoned.** A page that fetches fine but
+  yields zero segments (no title/H1, no H2s) gets a sentinel row in
+  cm_site_inventory: `segment_type='empty'`, a zero vector, and an
+  `updated_at` stamp. Without it the URL never appears in the inventory, so
+  the incremental `missing = sitemap - inventory` set re-fetches it every
+  run forever. `gap.Inventory.load` filters `empty` rows out of the matrix
+  so they cannot be a nearest match; the sitemap prune deletes them like any
+  other row; and they are re-checked every `settings.inventory_recheck_days`
+  (default 30) in case the page has since gained headings. A *failed* fetch
+  is never tombstoned — that must be retried next run.
 - **lastmod is untrusted.** New content = URL never seen before, period.
   Store lastmod for reference only.
 - **Embeddings storage:** bytea column, np.float32[384].tobytes() /

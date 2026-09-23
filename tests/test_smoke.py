@@ -177,6 +177,7 @@ class FakeQuery:
 class FakeSupabase:
     def __init__(self):
         self.store: dict[str, list[dict]] = {}
+        self.fetched_urls: list[list[str]] = []   # one entry per refresh run
 
     def table(self, name):
         return FakeQuery(self.store, name)
@@ -421,19 +422,35 @@ class TestGap:
 
 
 class TestRefreshInventory:
-    def _run(self, sb, monkeypatch, sitemap_urls, fetched, full=False):
+    def _run(self, sb, monkeypatch, sitemap_urls, fetched, full=False,
+             settings=None):
         import scripts.refresh_inventory as ri
 
         monkeypatch.setattr(ri.sitemaps, "fetch_urls",
                             lambda *a, **k: pd.DataFrame(
                                 {"url": sitemap_urls, "lastmod": pd.NaT}))
-        monkeypatch.setattr(ri.extract, "fetch_segments",
-                            lambda urls, *a, **k: [fetched[u] for u in urls])
+        def _fetch_segments(urls, *a, **k):
+            sb.fetched_urls.append(list(urls))
+            return [fetched[u] for u in urls]
+
+        monkeypatch.setattr(ri.extract, "fetch_segments", _fetch_segments)
         config = {"site": {"slug": "acme",
                            "sitemap": "https://acme.example/sitemap.xml",
                            "include_patterns": [], "exclude_patterns": []},
-                  "settings": {"user_agent": "t", "request_timeout": 5}}
+                  "settings": {"user_agent": "t", "request_timeout": 5,
+                               **(settings or {})}}
         return ri.refresh(sb, FakeModel(), config, full=full)
+
+    @staticmethod
+    def _age_rows(sb, days):
+        """Backdate every inventory row — simulates time passing between
+        weekly runs without monkeypatching the clock."""
+        import datetime as dt
+
+        then = (dt.datetime.now(dt.timezone.utc)
+                - dt.timedelta(days=days)).isoformat()
+        for row in sb.store["cm_site_inventory"]:
+            row["updated_at"] = then
 
     def test_first_run_populates_then_incremental_noop(self, monkeypatch):
         sb = FakeSupabase()
@@ -497,6 +514,135 @@ class TestRefreshInventory:
         stats = self._run(sb, monkeypatch,
                           ["https://acme.example/ok", "https://acme.example/bad"], fetched)
         assert stats["segments_embedded"] == 1
+        # a failed fetch is NOT tombstoned — it must be retried next run
+        assert stats["tombstoned"] == 0
+        self._run(sb, monkeypatch,
+                  ["https://acme.example/ok", "https://acme.example/bad"], fetched)
+        assert "https://acme.example/bad" in sb.fetched_urls[-1]
+
+    # ---- headless pages (no title/h1 and no h2s) --------------------
+
+    HEADLESS = {"url": "https://acme.example/bare", "error": "no headings found",
+                "segments": []}
+
+    def test_headless_url_tombstoned_and_not_refetched(self, monkeypatch):
+        sb = FakeSupabase()
+        fetched = {"https://acme.example/bare": self.HEADLESS}
+
+        stats = self._run(sb, monkeypatch, ["https://acme.example/bare"], fetched)
+        assert stats["tombstoned"] == 1
+        assert stats["segments_embedded"] == 0
+        rows = sb.store["cm_site_inventory"]
+        assert len(rows) == 1 and rows[0]["segment_type"] == "empty"
+
+        # second run: known-processed, so not fetched at all
+        stats2 = self._run(sb, monkeypatch, ["https://acme.example/bare"], fetched)
+        assert stats2["urls_added"] == 0
+        assert len(sb.fetched_urls) == 1           # never fetched a second time
+        assert len(sb.store["cm_site_inventory"]) == 1
+
+    def test_tombstone_excluded_from_similarity_matrix(self, monkeypatch):
+        from tools.gap import Inventory, check
+
+        sb = FakeSupabase()
+        fetched = {"https://acme.example/bare": self.HEADLESS,
+                   "https://acme.example/a": {
+                       "url": "https://acme.example/a", "error": None,
+                       "segments": [{"segment_index": 0, "segment_type": "page",
+                                     "segment_text": "A page"}]}}
+        self._run(sb, monkeypatch,
+                  ["https://acme.example/bare", "https://acme.example/a"], fetched)
+        assert len(sb.store["cm_site_inventory"]) == 2
+
+        inv = Inventory.load(sb)
+        assert len(inv) == 1                       # tombstone filtered out
+        assert inv.meta[0]["url"] == "https://acme.example/a"
+        out = check(FakeModel(), inv, [{"topic_text": "unrelated"}], 0.75, 0.85)
+        assert out[0]["nearest_site_url"] == "https://acme.example/a"
+
+    def test_tombstone_rechecked_on_cadence_and_cleared_on_headings(
+            self, monkeypatch):
+        sb = FakeSupabase()
+        fetched = {"https://acme.example/bare": self.HEADLESS}
+        self._run(sb, monkeypatch, ["https://acme.example/bare"], fetched,
+                  settings={"inventory_recheck_days": 30})
+
+        # 10 days later: still inside the cadence, still not fetched
+        self._age_rows(sb, 10)
+        stats = self._run(sb, monkeypatch, ["https://acme.example/bare"], fetched,
+                          settings={"inventory_recheck_days": 30})
+        assert stats["urls_added"] == 0
+
+        # 40 days later: re-checked, and it has since gained headings
+        self._age_rows(sb, 40)
+        fetched["https://acme.example/bare"] = {
+            "url": "https://acme.example/bare", "error": None,
+            "segments": [{"segment_index": 0, "segment_type": "page",
+                          "segment_text": "Bare page, now titled"}]}
+        stats = self._run(sb, monkeypatch, ["https://acme.example/bare"], fetched,
+                          settings={"inventory_recheck_days": 30})
+        assert stats["urls_added"] == 1
+        assert stats["segments_embedded"] == 1
+        rows = sb.store["cm_site_inventory"]
+        assert len(rows) == 1                      # tombstone replaced, no dupe
+        assert rows[0]["segment_type"] == "page"
+
+        # and it stays a normal inventory row from then on
+        stats = self._run(sb, monkeypatch, ["https://acme.example/bare"], fetched,
+                          settings={"inventory_recheck_days": 30})
+        assert stats["urls_added"] == 0
+
+    def test_tombstone_cleared_when_only_sections_appear(self, monkeypatch):
+        """Sections start at segment_index 1, so the index-0 tombstone would
+        survive the upsert unless it is deleted explicitly."""
+        sb = FakeSupabase()
+        fetched = {"https://acme.example/bare": self.HEADLESS}
+        self._run(sb, monkeypatch, ["https://acme.example/bare"], fetched)
+
+        self._age_rows(sb, 60)
+        fetched["https://acme.example/bare"] = {
+            "url": "https://acme.example/bare", "error": None,
+            "segments": [{"segment_index": 1, "segment_type": "section",
+                          "segment_text": "A new H2"}]}
+        self._run(sb, monkeypatch, ["https://acme.example/bare"], fetched)
+        types = [r["segment_type"] for r in sb.store["cm_site_inventory"]]
+        assert types == ["section"]
+
+    def test_page_that_loses_its_headings_is_tombstoned_cleanly(self, monkeypatch):
+        sb = FakeSupabase()
+        fetched = {"https://acme.example/a": {
+            "url": "https://acme.example/a", "error": None,
+            "segments": [{"segment_index": 0, "segment_type": "page",
+                          "segment_text": "A page"},
+                         {"segment_index": 1, "segment_type": "section",
+                          "segment_text": "A section"}]}}
+        self._run(sb, monkeypatch, ["https://acme.example/a"], fetched)
+        assert len(sb.store["cm_site_inventory"]) == 2
+
+        fetched["https://acme.example/a"] = {"url": "https://acme.example/a",
+                                             "error": "no headings found",
+                                             "segments": []}
+        stats = self._run(sb, monkeypatch, ["https://acme.example/a"], fetched,
+                          full=True)
+        assert stats["tombstoned"] == 1
+        rows = sb.store["cm_site_inventory"]
+        assert len(rows) == 1 and rows[0]["segment_type"] == "empty"
+
+    def test_tombstone_pruned_when_url_leaves_sitemap(self, monkeypatch):
+        sb = FakeSupabase()
+        fetched = {"https://acme.example/bare": self.HEADLESS,
+                   "https://acme.example/a": {
+                       "url": "https://acme.example/a", "error": None,
+                       "segments": [{"segment_index": 0, "segment_type": "page",
+                                     "segment_text": "A page"}]}}
+        self._run(sb, monkeypatch,
+                  ["https://acme.example/bare", "https://acme.example/a"], fetched)
+        assert len(sb.store["cm_site_inventory"]) == 2
+
+        stats = self._run(sb, monkeypatch, ["https://acme.example/a"], fetched)
+        assert stats["removed"] == 1
+        urls = {r["url"] for r in sb.store["cm_site_inventory"]}
+        assert urls == {"https://acme.example/a"}
 
 
 # ---------------------------------------------------------------- M5
