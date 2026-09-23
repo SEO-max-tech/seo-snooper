@@ -133,30 +133,95 @@ competitors:
     active: true
 ```
 
+Everything up to here takes about fifteen minutes. This block is the part
+that decides whether the tool is useful or noise, so it's worth an hour.
+
 The `taxonomy` block is what the judge reasons over. Be specific — vague
 taxonomies let noise through. `out_of_scope` matters as much as `in_scope`:
 it's how you stop a competitor's adjacent product line from generating
 useless suggestions every week.
 
-### 5. Baseline, then run
+For competitors, open each sitemap in a browser before adding it. If what
+you see is mostly templated integration and solution pages, restrict it with
+`include_patterns: ["/blog/"]`. Five to fifteen competitors is the sweet
+spot — start with fewer than you think you want, because every extra one is
+weekly noise and adding more later is trivial.
+
+`site.slug` is a storage key. Pick it once and leave it alone (changing it
+re-baselines your whole inventory), and don't let it collide with a
+competitor slug.
+
+### 5. Build your content inventory
+
+**Do this locally, before you ever schedule the job.**
+
+```bash
+python scripts/refresh_inventory.py
+```
+
+The first inventory crawl fetches *every URL in your own sitemap*, one page
+at a time. On a 5,000-page site that's roughly an hour. The GitHub Actions
+job times out at 45 minutes, so on a site of any size a cold first run in CI
+will simply die. Do it locally once and every later run is incremental and
+takes seconds.
+
+Pass `--full` to force a complete re-crawl and re-embed later, for example
+after changing `embedding_model`.
+
+Check it worked before moving on:
+
+```sql
+select count(*) from cm_site_inventory;
+select segment_type, count(*) from cm_site_inventory group by segment_type;
+```
+
+You want several rows per page — one `page` segment plus one `section` per
+H2. If the table is empty or suspiciously small, either your sitemap filters
+are wrong or your pages are client-rendered and have no server-side
+headings for the parser to find.
+
+### 6. Baseline run
 
 ```bash
 python main.py --dry-run
 ```
 
-**The first run reports nothing, and that's correct.** With no history, every
-URL a competitor has ever published would look "new". The first run records
-everything as `baseline` and stays quiet. It also crawls and embeds your own
-site, which is the slow part — expect several minutes on a large site. Later
-runs are incremental and much faster.
+**This reports nothing, and that's correct.** With no history, every URL a
+competitor has ever published would look "new". The first run records
+everything as `baseline` and stays deliberately quiet.
 
-Run it again a week later and you'll get real results.
+Check the baseline landed:
+
+```sql
+select competitor_slug, count(*) from cm_urls group by competitor_slug;
+```
+
+This is where a too-loose `include_patterns` shows up. A competitor with
+40,000 rows is a filter problem, not a content machine — go back and narrow
+it before you run again.
+
+### 7. Wait a week, then the real run
+
+```bash
+python main.py --dry-run
+```
+
+Now you get actual output. Read it critically and expect to tune — see
+[Tuning](#tuning) below. Two or three rounds is normal; nobody gets the
+taxonomy right on the first try.
 
 ```bash
 python main.py                          # full run, posts to webhooks
 python main.py --competitor asana       # one competitor, for debugging
 python main.py --dry-run                # no webhooks, no alert rows
 ```
+
+### What to expect
+
+Fifteen minutes of setup, an hour on the config, a week of waiting, then two
+or three tuning passes over the following month. The tool starts earning its
+place around week three, once the taxonomy is dialled in and you've dropped
+the competitors that turned out to be noise.
 
 ---
 
@@ -202,26 +267,90 @@ metrics are missing.
 
 ## Running it weekly on GitHub Actions
 
+**Lay the baseline locally first** (steps 5 and 6 above). A cold first run
+in CI has to crawl your entire sitemap and will hit the 45-minute job
+timeout on any site of real size. Once `cm_site_inventory` is populated,
+every scheduled run is incremental and finishes in a couple of minutes.
+
 Fork the repo, then add your secrets under **Settings → Secrets and variables
 → Actions**: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ANTHROPIC_API_KEY`, and
 whichever of `AHREFS_API_KEY` / `SLACK_WEBHOOK_URL` / `GCHAT_WEBHOOK_URL` /
 `DISCORD_WEBHOOK_URL` you're using.
 
-Two workflows ship with the repo:
+Two scheduled workflows ship with the repo (plus `tests.yml`, which just
+runs the offline suite on push and PR):
 
-- **`weekly.yml`** — the scan, Sundays at 02:30 UTC. Trigger it manually
-  first (**Actions → weekly-competitor-scan → Run workflow**) with `dry_run`
-  checked to confirm your config and credentials, and to lay the baseline.
+- **`weekly.yml`** — the scan, Sundays at 02:30 UTC. Run it once by hand
+  (**Actions → weekly-competitor-scan → Run workflow**) with `dry_run`
+  checked, to confirm your secrets work in CI before trusting the cron.
 - **`keepalive.yml`** — a trivial `SELECT` every three days. Supabase's free
   tier pauses a project after 7 days of inactivity, and a weekly scan sits
   exactly on that edge. Delete this if you're on a paid tier.
 
-The embedding model is cached between runs, so a typical weekly run finishes
-in a couple of minutes.
+Both jobs self-skip with a green "not configured" notice if `SUPABASE_URL`
+is missing, so a clone you haven't set up yet won't mail you a failure every
+week.
 
 ---
 
 ## Tuning
+
+The report is only as good as your taxonomy. Start here, in this order.
+
+### "It's reporting things we obviously already cover"
+
+Your inventory is too thin. Check it:
+
+```sql
+select count(*) from cm_site_inventory;
+```
+
+If that number is far below your page count, the crawl isn't finding
+headings. Common causes: pages render client-side so there's no server-side
+H1/H2 for the parser, or `site.exclude_patterns` is cutting more than you
+meant. Fix the inventory before touching thresholds — no threshold can
+rescue a corpus that doesn't contain your content.
+
+If the inventory is healthy, raise `partial_threshold` so more near-misses
+resolve as covered.
+
+### "It's reporting topics that have nothing to do with us"
+
+Tighten `taxonomy.out_of_scope` first. It's cheaper, more precise, and more
+durable than moving thresholds, because it acts on meaning rather than on a
+similarity number. Name the adjacent product categories your competitors
+sell that you don't — that one edit kills most recurring noise.
+
+Then narrow `include_patterns` for the worst offenders. A competitor whose
+marketing pages are templated boilerplate should usually be `["/blog/"]`.
+
+### "We're getting nothing at all"
+
+Work backwards through the pipeline with one competitor:
+
+```bash
+python main.py --competitor asana --dry-run
+```
+
+The final log line reports that competitor's totals —
+`run complete: {'new': N, 'gaps': N, 'in_scope': N, 'alerted': N}` — and
+`tools.diff` logs the URL counts above it. Find the stage that goes to zero:
+
+| Stage drops to zero | What it means |
+|---|---|
+| `urls upserted` | Sitemap unreachable, or `include_patterns` excludes everything |
+| `N new` | Genuinely nothing published since last run — or you're still on the baseline run |
+| gaps | Everything scored as covered. Lower `partial_threshold`, or check for an over-broad inventory |
+| in-scope | The judge is rejecting everything. Your `taxonomy.in_scope` is too narrow |
+| alerted | Everything fell under `min_volume`. Lower the floor, or check whether you're on stub keyword data |
+
+### "Too many low-volume topics"
+
+They're already collapsed into a footer count rather than the main list.
+Raise `min_volume` if the footer itself is getting noisy. Nothing is lost —
+every item, suppressed or not, is written to `cm_alerts`.
+
+### The knobs
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -232,12 +361,8 @@ in a couple of minutes.
 | `request_timeout` | `20` | Per-page fetch timeout, seconds |
 | `embedding_model` | `all-MiniLM-L6-v2` | Any sentence-transformers model. Changing it invalidates stored vectors — delete `cm_site_inventory` and let it rebuild |
 
-Getting too much noise? Tighten `taxonomy.out_of_scope` first — it's cheaper
-and more precise than moving thresholds. Then narrow `include_patterns` to
-just `/blog/` for competitors whose marketing pages are boilerplate.
-
-Getting nothing? Check that `cm_site_inventory` actually has rows. An empty
-inventory makes everything a gap; a *too-broad* one makes everything covered.
+Change one thing at a time and re-run with `--dry-run`. Thresholds interact,
+and moving two at once tells you nothing about which one mattered.
 
 ---
 
