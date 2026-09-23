@@ -1,10 +1,10 @@
 """Weekly competitor content-gap scan. Deterministic orchestration only —
-see CLAUDE.md for the pipeline contract and failure policy.
+see SPEC.md for the pipeline contract and failure policy.
 
 Usage:
     python main.py                 # full run
     python main.py --competitor elevenlabs   # single competitor (debug)
-    python main.py --dry-run       # everything except Chat send + alert rows
+    python main.py --dry-run       # everything except webhooks + alert rows
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import yaml
 from scripts.refresh_inventory import refresh as refresh_inventory
 from tools import ahrefs, diff, extract, gap, judge, notify, sitemaps
 
-log = logging.getLogger("competitor-monitor")
+log = logging.getLogger("seo-snooper")
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
 
@@ -102,16 +102,16 @@ def run(args, supabase=None, model=None, anthropic_client=None,
     errors: dict[str, str] = {}
     stats: dict[str, dict] = {}
 
-    # 1. refresh Murf's own inventory
+    # 1. refresh our own site's inventory
     try:
-        stats["murf_inventory"] = refresh_inventory(supabase, model, config)
+        stats["site_inventory"] = refresh_inventory(supabase, model, config)
     except Exception as exc:  # noqa: BLE001 — stale inventory is usable
         log.exception("inventory refresh failed — continuing with stale")
-        errors["murf_inventory"] = str(exc)
+        errors["site_inventory"] = str(exc)
 
     inventory = gap.Inventory.load(supabase)
     if len(inventory) == 0:
-        log.warning("murf inventory is EMPTY — every topic will bucket as gap")
+        log.warning("site inventory is EMPTY — every topic will bucket as gap")
 
     # 2. scan competitors
     competitors = [c for c in config["competitors"] if c.get("active")]
@@ -148,7 +148,8 @@ def run(args, supabase=None, model=None, anthropic_client=None,
         for item in all_items:
             try:
                 verdict = judge.evaluate(anthropic_client, judge_model,
-                                         config["murf_taxonomy"], item)
+                                         config["site"], config["taxonomy"],
+                                         item)
             except Exception as exc:  # noqa: BLE001 — per-item isolation
                 log.warning("judge failed for %s: %s", item["url"], exc)
                 verdict = {**item, **judge.FAIL_OPEN, "reason": str(exc)}
@@ -161,10 +162,16 @@ def run(args, supabase=None, model=None, anthropic_client=None,
     # 4. enrich with keyword metrics (batched across competitors)
     if provider is None:
         provider = ahrefs.get_provider(settings["ahrefs_max_keywords"])
+    enrichment_failed = False
     if judged:
         keywords = [j["target_keyword"] for j in judged if j["target_keyword"]]
-        metrics = provider.keyword_overview(
-            list(dict.fromkeys(keywords)), settings["country"])
+        try:
+            metrics = provider.keyword_overview(
+                list(dict.fromkeys(keywords)), settings["country"])
+        except Exception as exc:  # noqa: BLE001 — report unenriched, not never
+            log.exception("keyword enrichment failed — reporting without metrics")
+            errors["keywords"] = str(exc)
+            metrics, enrichment_failed = {}, True
         for j in judged:
             m = metrics.get(j.get("target_keyword"), {})
             j["volume"] = m.get("volume")
@@ -175,17 +182,18 @@ def run(args, supabase=None, model=None, anthropic_client=None,
                 if slug in stats:
                     stats[slug]["alerted"] += 1
 
-    # 5. notify + record
+    # 5. record the run FIRST, then notify — a webhook problem must never
+    #    cost us the run row (and the alert history that references it).
     totals = {k: sum(s.get(k, 0) for s in stats.values() if isinstance(s, dict))
               for k in ("new", "gaps", "in_scope", "alerted")}
-    run_stats = {"totals": totals, "stub_data": getattr(provider, "is_stub", False)}
-    card = notify.build_card(run_stats, judged, settings["min_volume"])
-
-    if args.dry_run:
-        log.info("dry run — printing card, skipping alert rows")
-        notify.send(None, card)
-    else:
-        notify.send(os.getenv("GCHAT_WEBHOOK_URL") or None, card)
+    run_stats = {
+        "totals": totals,
+        "stub_data": getattr(provider, "is_stub", False),
+        "enrichment_failed": enrichment_failed,
+    }
+    # With no metrics, every item reads as zero volume and would be filtered
+    # into the suppressed footer — drop the floor so the report still lands.
+    report_min_volume = 0 if enrichment_failed else settings["min_volume"]
 
     run_id = _record_run(supabase, started_at, stats, errors)
 
@@ -201,7 +209,7 @@ def run(args, supabase=None, model=None, anthropic_client=None,
                 "topic_title": j.get("topic_text"),
                 "bucket": j["bucket"],
                 "similarity": j.get("similarity"),
-                "nearest_murf_url": j.get("nearest_murf_url"),
+                "nearest_site_url": j.get("nearest_site_url"),
                 "target_keyword": j.get("target_keyword"),
                 "volume": j.get("volume"),
                 "keyword_difficulty": j.get("keyword_difficulty"),
@@ -209,6 +217,10 @@ def run(args, supabase=None, model=None, anthropic_client=None,
                 "judge_reason": j.get("reason"),
             })
         supabase.table("cm_alerts").insert(alert_rows).execute()
+
+    if args.dry_run:
+        log.info("dry run — printing report, skipping webhooks")
+    notify.send(run_stats, judged, report_min_volume, dry_run=args.dry_run)
 
     log.info("run complete: %s (errors: %s)", totals, errors or "none")
     return 0
@@ -226,10 +238,10 @@ def _record_run(supabase, started_at: str, stats: dict, errors: dict) -> int:
 
 
 def _parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="competitor content-gap scan")
+    parser = argparse.ArgumentParser(description="SEO Snooper — competitor content-gap scan")
     parser.add_argument("--competitor", help="run a single competitor slug")
     parser.add_argument("--dry-run", action="store_true",
-                        help="skip Chat send + alert rows")
+                        help="skip webhooks + alert rows")
     return parser.parse_args(argv)
 
 

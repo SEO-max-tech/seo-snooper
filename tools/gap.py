@@ -1,7 +1,7 @@
-"""Semantic gap check: competitor topic vs Murf inventory.
+"""Semantic gap check: competitor topic vs your own site inventory.
 
 Embeds with sentence-transformers all-MiniLM-L6-v2 (384d). Loads the FULL
-cm_murf_inventory into a normalized numpy matrix once per run; cosine is
+cm_site_inventory into a normalized numpy matrix once per run; cosine is
 matrix @ query. Max over all segments = the score.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ class Inventory:
         rows: list[dict] = []
         offset, page = 0, 1000
         while True:
-            resp = (supabase.table("cm_murf_inventory")
+            resp = (supabase.table("cm_site_inventory")
                     .select("url,segment_type,segment_text,embedding")
                     .range(offset, offset + page - 1).execute())
             batch = resp.data or []
@@ -75,7 +75,7 @@ def check(model, inventory: Inventory, items: list[dict],
           gap_threshold: float, partial_threshold: float) -> list[dict]:
     """items: competitor records with topic_text.
     Adds: similarity (float), bucket ('gap'|'partial'|'covered'),
-    nearest_murf_url, nearest_segment_text.
+    nearest_site_url, nearest_segment_text.
     'covered' items are returned too (caller drops them) so smoke tests can
     assert all three buckets.
     """
@@ -87,7 +87,7 @@ def check(model, inventory: Inventory, items: list[dict],
         # empty inventory: everything is a gap by definition
         for it in items:
             it.update(similarity=0.0, bucket="gap",
-                      nearest_murf_url=None, nearest_segment_text=None)
+                      nearest_site_url=None, nearest_segment_text=None)
         return items
 
     queries = embed_texts(model, [it["topic_text"] for it in items])
@@ -103,6 +103,6 @@ def check(model, inventory: Inventory, items: list[dict],
         else:
             bucket = "covered"
         it.update(similarity=round(sim, 4), bucket=bucket,
-                  nearest_murf_url=inventory.meta[best]["url"],
+                  nearest_site_url=inventory.meta[best]["url"],
                   nearest_segment_text=inventory.meta[best]["segment_text"])
     return items

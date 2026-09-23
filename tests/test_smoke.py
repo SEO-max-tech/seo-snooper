@@ -2,7 +2,7 @@
 module, built milestone by milestone. Fixtures live in tests/fixtures/:
   - sitemap_index.xml, sitemap_blog.xml  (M1: index handling + filters)
   - competitor_page.html                  (M3: title/h1/meta extraction)
-  - murf_guide.html                       (M3: h1 + h2/h3 segment extraction)
+  - site_guide.html                       (M3: h1 + h2/h3 segment extraction)
 
 Mock patterns (match the seo-agents repo):
   - supabase: minimal fake exposing .table().upsert/.select with canned data
@@ -14,7 +14,7 @@ Must-have assertions:
   - diff first-run guard returns [] and writes status='baseline'
   - gap buckets at sim 0.70 / 0.80 / 0.90 -> gap / partial / covered
   - judge fail-open on double malformed JSON
-  - notify.build_card puts sub-min_volume items in footer, not main list
+  - notify builders put sub-min_volume items in footer, not main list
 """
 from __future__ import annotations
 
@@ -275,8 +275,8 @@ class TestExtract:
     def test_inventory_segments(self):
         from tools.extract import parse_segments
 
-        html = (FIXTURES / "murf_guide.html").read_text()
-        rec = parse_segments(html, "https://murf.ai/resources/tts-guide")
+        html = (FIXTURES / "site_guide.html").read_text()
+        rec = parse_segments(html, "https://acme.example/resources/tts-guide")
         assert rec["error"] is None
         segs = rec["segments"]
         assert segs[0]["segment_type"] == "page"
@@ -340,7 +340,7 @@ class TestGap:
 
         base = np.zeros(384, dtype=np.float32)
         base[0] = 1.0
-        meta = [{"url": "https://murf.ai/resources/tts-guide",
+        meta = [{"url": "https://acme.example/resources/tts-guide",
                  "segment_type": "section",
                  "segment_text": "How text to speech works"}]
         return Inventory(base.reshape(1, -1), meta), base
@@ -365,7 +365,7 @@ class TestGap:
         sims = {it["topic_text"]: it["similarity"] for it in out}
         assert abs(sims["partial topic"] - 0.80) < 1e-3
 
-    def test_nearest_murf_url_reported(self):
+    def test_nearest_site_url_reported(self):
         from tools.gap import check
 
         inv, base = self._inventory()
@@ -373,7 +373,7 @@ class TestGap:
         out = check(model, inv,
                     [{"url": "https://c.com/x", "topic_text": "partial topic"}],
                     0.75, 0.85)
-        assert out[0]["nearest_murf_url"] == "https://murf.ai/resources/tts-guide"
+        assert out[0]["nearest_site_url"] == "https://acme.example/resources/tts-guide"
         assert out[0]["nearest_segment_text"] == "How text to speech works"
 
     def test_max_over_segments(self):
@@ -383,9 +383,9 @@ class TestGap:
         page_vec = np.zeros(384, dtype=np.float32); page_vec[5] = 1.0
         sect_vec = np.zeros(384, dtype=np.float32); sect_vec[0] = 1.0
         inv = Inventory(np.vstack([page_vec, sect_vec]), [
-            {"url": "https://murf.ai/g", "segment_type": "page",
+            {"url": "https://acme.example/g", "segment_type": "page",
              "segment_text": "Guide"},
-            {"url": "https://murf.ai/g", "segment_type": "section",
+            {"url": "https://acme.example/g", "segment_type": "section",
              "segment_text": "Matching section"},
         ])
         model = FakeModel({"topic": _vec_at_cosine(sect_vec, 0.90)})
@@ -410,8 +410,8 @@ class TestGap:
         model = FakeModel()
         vec = embed_texts(model, ["roundtrip"])[0]
         sb = FakeSupabase()
-        sb.store["cm_murf_inventory"] = [{
-            "id": "x", "url": "https://murf.ai/p", "segment_type": "page",
+        sb.store["cm_site_inventory"] = [{
+            "id": "x", "url": "https://acme.example/p", "segment_type": "page",
             "segment_text": "roundtrip", "content_hash": "h",
             "embedding": "\\x" + vec.tobytes().hex(),
         }]
@@ -429,72 +429,73 @@ class TestRefreshInventory:
                                 {"url": sitemap_urls, "lastmod": pd.NaT}))
         monkeypatch.setattr(ri.extract, "fetch_segments",
                             lambda urls, *a, **k: [fetched[u] for u in urls])
-        config = {"murf": {"sitemap": "https://murf.ai/sitemap.xml",
+        config = {"site": {"slug": "acme",
+                           "sitemap": "https://acme.example/sitemap.xml",
                            "include_patterns": [], "exclude_patterns": []},
                   "settings": {"user_agent": "t", "request_timeout": 5}}
         return ri.refresh(sb, FakeModel(), config, full=full)
 
     def test_first_run_populates_then_incremental_noop(self, monkeypatch):
         sb = FakeSupabase()
-        fetched = {"https://murf.ai/a": {
-            "url": "https://murf.ai/a", "error": None,
+        fetched = {"https://acme.example/a": {
+            "url": "https://acme.example/a", "error": None,
             "segments": [{"segment_index": 0, "segment_type": "page",
                           "segment_text": "A page"}]}}
-        stats = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched)
+        stats = self._run(sb, monkeypatch, ["https://acme.example/a"], fetched)
         assert stats["segments_embedded"] == 1
-        assert len(sb.store["cm_murf_inventory"]) == 1
+        assert len(sb.store["cm_site_inventory"]) == 1
 
         # incremental rerun: URL known + inventoried -> not even fetched
-        stats2 = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched)
+        stats2 = self._run(sb, monkeypatch, ["https://acme.example/a"], fetched)
         assert stats2["urls_added"] == 0
         assert stats2["segments_embedded"] == 0
 
         # full rerun: re-fetched, but unchanged hash -> skip re-embed
-        stats3 = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched,
+        stats3 = self._run(sb, monkeypatch, ["https://acme.example/a"], fetched,
                            full=True)
         assert stats3["segments_embedded"] == 0
         assert stats3["segments_skipped"] == 1
 
         # content change -> re-embed under same stable id
-        fetched["https://murf.ai/a"]["segments"][0]["segment_text"] = "A page v2"
-        stats4 = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched,
+        fetched["https://acme.example/a"]["segments"][0]["segment_text"] = "A page v2"
+        stats4 = self._run(sb, monkeypatch, ["https://acme.example/a"], fetched,
                            full=True)
         assert stats4["segments_embedded"] == 1
-        assert len(sb.store["cm_murf_inventory"]) == 1   # upsert, no dupe
+        assert len(sb.store["cm_site_inventory"]) == 1   # upsert, no dupe
 
     def test_vanished_url_pruned(self, monkeypatch):
         sb = FakeSupabase()
         fetched = {
-            "https://murf.ai/a": {"url": "https://murf.ai/a", "error": None,
+            "https://acme.example/a": {"url": "https://acme.example/a", "error": None,
                                   "segments": [{"segment_index": 0,
                                                 "segment_type": "page",
                                                 "segment_text": "A"}]},
-            "https://murf.ai/b": {"url": "https://murf.ai/b", "error": None,
+            "https://acme.example/b": {"url": "https://acme.example/b", "error": None,
                                   "segments": [{"segment_index": 0,
                                                 "segment_type": "page",
                                                 "segment_text": "B"}]},
         }
-        self._run(sb, monkeypatch, ["https://murf.ai/a", "https://murf.ai/b"],
+        self._run(sb, monkeypatch, ["https://acme.example/a", "https://acme.example/b"],
                   fetched)
-        assert len(sb.store["cm_murf_inventory"]) == 2
+        assert len(sb.store["cm_site_inventory"]) == 2
 
-        stats = self._run(sb, monkeypatch, ["https://murf.ai/a"], fetched)
+        stats = self._run(sb, monkeypatch, ["https://acme.example/a"], fetched)
         assert stats["removed"] == 1
-        urls = {r["url"] for r in sb.store["cm_murf_inventory"]}
-        assert urls == {"https://murf.ai/a"}
+        urls = {r["url"] for r in sb.store["cm_site_inventory"]}
+        assert urls == {"https://acme.example/a"}
 
     def test_failed_fetch_does_not_kill_batch(self, monkeypatch):
         sb = FakeSupabase()
         fetched = {
-            "https://murf.ai/ok": {"url": "https://murf.ai/ok", "error": None,
+            "https://acme.example/ok": {"url": "https://acme.example/ok", "error": None,
                                    "segments": [{"segment_index": 0,
                                                  "segment_type": "page",
                                                  "segment_text": "OK"}]},
-            "https://murf.ai/bad": {"url": "https://murf.ai/bad",
+            "https://acme.example/bad": {"url": "https://acme.example/bad",
                                     "error": "HTTP 500"},
         }
         stats = self._run(sb, monkeypatch,
-                          ["https://murf.ai/ok", "https://murf.ai/bad"], fetched)
+                          ["https://acme.example/ok", "https://acme.example/bad"], fetched)
         assert stats["segments_embedded"] == 1
 
 
@@ -503,6 +504,9 @@ class TestRefreshInventory:
 GOOD_JSON = ('{"in_scope": true, "reason": "voice topic", '
              '"target_keyword": "ai voice generator", '
              '"suggested_page_type": "listicle", "confidence": "high"}')
+
+SITE = {"slug": "acme", "name": "Acme",
+        "description": "an AI voice platform"}
 
 TAXONOMY = {"in_scope": ["text to speech", "voice cloning"],
             "out_of_scope": ["AI video generation", "music generation"]}
@@ -535,7 +539,7 @@ class TestJudge:
         from tools.judge import evaluate
 
         client = FakeAnthropicClient([GOOD_JSON])
-        out = evaluate(client, "claude-haiku-4-5", TAXONOMY, ITEM)
+        out = evaluate(client, "claude-haiku-4-5", SITE, TAXONOMY, ITEM)
         assert out["in_scope"] is True
         assert out["target_keyword"] == "ai voice generator"
         assert out["suggested_page_type"] == "listicle"
@@ -546,20 +550,26 @@ class TestJudge:
         from tools.judge import evaluate
 
         client = FakeAnthropicClient([GOOD_JSON])
-        evaluate(client, "m", TAXONOMY, ITEM)
+        evaluate(client, "m", SITE, TAXONOMY, ITEM)
         prompt = client.prompts[0]
         assert "- voice cloning" in prompt
         assert "- music generation" in prompt
         assert "{in_scope_taxonomy}" not in prompt
         assert ITEM["topic_text"] in prompt
-        # partial bucket -> nearest Murf context included
+        # brand injected from config, not baked into the prompt file
+        assert "{brand_name}" not in prompt
+        assert "strategist for Acme, an AI voice platform" in prompt
+        # the prompt FILE must stay brand-free — identity comes from config
+        from tools.judge import PROMPT_PATH
+        assert "Acme" not in PROMPT_PATH.read_text()
+        # partial bucket -> nearest-content context included
         assert "How text to speech works" in prompt
 
     def test_retry_once_then_success(self):
         from tools.judge import evaluate
 
         client = FakeAnthropicClient(["not json at all", GOOD_JSON])
-        out = evaluate(client, "m", TAXONOMY, ITEM)
+        out = evaluate(client, "m", SITE, TAXONOMY, ITEM)
         assert len(client.prompts) == 2
         assert out["in_scope"] is True
         assert out["reason"] == "voice topic"
@@ -568,7 +578,7 @@ class TestJudge:
         from tools.judge import evaluate
 
         client = FakeAnthropicClient(["garbage", '{"in_scope": "yes"}'])
-        out = evaluate(client, "m", TAXONOMY, ITEM)
+        out = evaluate(client, "m", SITE, TAXONOMY, ITEM)
         assert len(client.prompts) == 2          # exactly one retry
         assert out["in_scope"] is True
         assert out["confidence"] == "low"
@@ -578,7 +588,7 @@ class TestJudge:
         from tools.judge import evaluate
 
         client = FakeAnthropicClient(["```json\n" + GOOD_JSON + "\n```"])
-        out = evaluate(client, "m", TAXONOMY, ITEM)
+        out = evaluate(client, "m", SITE, TAXONOMY, ITEM)
         assert out["target_keyword"] == "ai voice generator"
 
     def test_invalid_enum_rejected(self):
@@ -633,7 +643,7 @@ class TestAhrefs:
 def _alert_item(**over):
     base = {"competitor_slug": "elevenlabs", "competitor_name": "ElevenLabs",
             "url": "https://elevenlabs.io/blog/x", "topic_text": "Topic X",
-            "bucket": "gap", "similarity": 0.55, "nearest_murf_url": None,
+            "bucket": "gap", "similarity": 0.55, "nearest_site_url": None,
             "target_keyword": "topic x", "volume": 900,
             "keyword_difficulty": 30, "suggested_page_type": "blog"}
     base.update(over)
@@ -641,17 +651,27 @@ def _alert_item(**over):
 
 
 class TestNotify:
-    def test_card_shape_and_grouping(self):
-        from tools.notify import build_card
+    """Every channel is built from the same partition()/_facts() shaping, so
+    each builder is checked for its own payload shape plus the shared rules
+    (grouping, volume sort, low-volume footer, partial context)."""
 
-        items = [
+    ITEMS = None  # set per-test
+
+    def _items(self):
+        return [
             _alert_item(),
             _alert_item(url="https://elevenlabs.io/blog/y",
                         topic_text="Topic Y", volume=5000),
             _alert_item(competitor_slug="playht", competitor_name="PlayHT",
                         url="https://play.ht/blog/z", topic_text="Topic Z"),
         ]
-        card = build_card({"totals": {"new": 12, "gaps": 3}}, items, 100)
+
+    # ---- Google Chat -------------------------------------------------
+    def test_gchat_shape_and_grouping(self):
+        from tools.notify import build_gchat_card
+
+        card = build_gchat_card({"totals": {"new": 12, "gaps": 3}},
+                                self._items(), 100)
         assert "cardsV2" in card
         sections = card["cardsV2"][0]["card"]["sections"]
         headers = [s.get("header", "") for s in sections]
@@ -661,49 +681,207 @@ class TestNotify:
         el = next(s for s in sections if "ElevenLabs" in s.get("header", ""))
         assert "Topic Y" in json.dumps(el["widgets"][0])
 
-    def test_low_volume_goes_to_footer(self):
-        from tools.notify import build_card
+    def test_gchat_escapes_html_in_titles(self):
+        from tools.notify import build_gchat_card
 
+        item = _alert_item(topic_text="Tips & Tricks <b>2025</b>")
+        text = json.dumps(build_gchat_card({"totals": {}}, [item], 100))
+        assert "Tips &amp; Tricks" in text
+        assert "<b>2025</b>" not in text        # user text never raw HTML
+
+    # ---- Slack -------------------------------------------------------
+    def test_slack_block_kit_shape(self):
+        from tools.notify import build_slack_blocks
+
+        payload = build_slack_blocks({"totals": {"new": 12, "gaps": 3}},
+                                     self._items(), 100)
+        assert payload["text"]                  # notification fallback text
+        blocks = payload["blocks"]
+        assert blocks[0]["type"] == "header"
+        assert len(blocks) <= 50
+        assert {b["type"] for b in blocks} <= {
+            "header", "context", "divider", "section"}
+        text = "\n".join(b.get("text", {}).get("text", "")
+                         for b in blocks if b["type"] == "section")
+        assert "*ElevenLabs* — 2 topic(s)" in text
+        assert "<https://elevenlabs.io/blog/y|Topic Y>" in text
+
+    def test_slack_escapes_mrkdwn_specials(self):
+        from tools.notify import build_slack_blocks
+
+        item = _alert_item(topic_text="A < B & C > D")
+        text = json.dumps(build_slack_blocks({"totals": {}}, [item], 100))
+        assert "A &lt; B &amp; C &gt; D" in text
+
+    # ---- Discord -----------------------------------------------------
+    def test_discord_embed_shape(self):
+        from tools.notify import build_discord_payload
+
+        payload = build_discord_payload({"totals": {"new": 12}},
+                                        self._items(), 100)
+        assert payload["content"]
+        embeds = payload["embeds"]
+        assert len(embeds) <= 10
+        titles = [e["title"] for e in embeds]
+        assert any("ElevenLabs — 2" in x for x in titles)
+        assert all(len(e["description"]) <= 4096 for e in embeds)
+        assert "[Topic Y](https://elevenlabs.io/blog/y)" in json.dumps(payload)
+
+    # ---- console -----------------------------------------------------
+    def test_text_report_readable(self):
+        from tools.notify import build_text
+
+        out = build_text({"totals": {"new": 12, "gaps": 3}}, self._items(), 100)
+        assert "ElevenLabs — 2 topic(s)" in out
+        assert "https://elevenlabs.io/blog/y" in out
+        assert out.index("Topic Y") < out.index("Topic X")   # volume sort
+
+    # ---- rules shared by every channel -------------------------------
+    @pytest.mark.parametrize("builder_name", [
+        "build_gchat_card", "build_slack_blocks", "build_discord_payload",
+        "build_text"])
+    def test_low_volume_goes_to_footer(self, builder_name):
+        import tools.notify as n
+
+        builder = getattr(n, builder_name)
         items = [_alert_item(), _alert_item(topic_text="Tiny topic",
                                             url="https://e.io/t", volume=40)]
-        card = build_card({"totals": {}}, items, 100)
-        text = json.dumps(card)
-        sections = card["cardsV2"][0]["card"]["sections"]
-        main = json.dumps(sections[0])
-        assert "Tiny topic" not in main
+        out = builder({"totals": {}}, items, 100)
+        text = out if isinstance(out, str) else json.dumps(out)
         assert "1 low-volume topic" in text
+        # the suppressed item's title never appears in the body
+        assert "Tiny topic" not in text
 
-    def test_partial_shows_similarity_and_nearest(self):
-        from tools.notify import build_card
+    @pytest.mark.parametrize("builder_name", [
+        "build_gchat_card", "build_slack_blocks", "build_discord_payload",
+        "build_text"])
+    def test_partial_shows_similarity_and_nearest(self, builder_name):
+        import tools.notify as n
 
         items = [_alert_item(bucket="partial", similarity=0.81,
-                             nearest_murf_url="https://murf.ai/guide")]
-        text = json.dumps(build_card({"totals": {}}, items, 100))
-        assert "0.81" in text and "https://murf.ai/guide" in text
+                             nearest_site_url="https://acme.example/guide")]
+        out = getattr(n, builder_name)({"totals": {}}, items, 100)
+        text = out if isinstance(out, str) else json.dumps(out)
+        assert "0.81" in text and "https://acme.example/guide" in text
 
-    def test_empty_run_friendly_message(self):
-        from tools.notify import build_card
+    @pytest.mark.parametrize("builder_name", [
+        "build_gchat_card", "build_slack_blocks", "build_discord_payload",
+        "build_text"])
+    def test_empty_run_friendly_message(self, builder_name):
+        import tools.notify as n
 
-        text = json.dumps(build_card({"totals": {}}, [], 100))
+        out = getattr(n, builder_name)({"totals": {}}, [], 100)
+        text = out if isinstance(out, str) else json.dumps(out)
         assert "No new in-scope content gaps" in text
 
-    def test_stub_data_flagged(self):
-        from tools.notify import build_card
+    @pytest.mark.parametrize("builder_name", [
+        "build_gchat_card", "build_slack_blocks", "build_discord_payload",
+        "build_text"])
+    def test_stub_data_flagged(self, builder_name):
+        import tools.notify as n
 
-        text = json.dumps(build_card({"totals": {}, "stub_data": True},
-                                     [_alert_item()], 100))
+        out = getattr(n, builder_name)({"totals": {}, "stub_data": True},
+                                       [_alert_item()], 100)
+        text = out if isinstance(out, str) else json.dumps(out)
         assert "STUB data" in text
 
-    def test_send_dev_mode_prints(self, capsys):
-        from tools.notify import build_card, send
+    def test_enrichment_failure_supersedes_stub_note(self):
+        from tools.notify import build_text
 
-        card = build_card({"totals": {}}, [_alert_item()], 100)
-        send(None, card)
-        out = capsys.readouterr().out
-        assert json.loads(out)["cardsV2"]
+        out = build_text({"totals": {}, "stub_data": True,
+                          "enrichment_failed": True}, [_alert_item()], 0)
+        assert "Keyword lookup failed" in out
+        assert "STUB data" not in out
+
+    def test_truncation_reports_overflow(self):
+        from tools.notify import MAX_ITEMS_PER_COMPETITOR, build_text
+
+        items = [_alert_item(url=f"https://e.io/{i}", topic_text=f"T{i}",
+                             volume=1000 + i)
+                 for i in range(MAX_ITEMS_PER_COMPETITOR + 3)]
+        out = build_text({"totals": {}}, items, 100)
+        assert "3 more topic(s) truncated" in out
+
+    # ---- dispatch ----------------------------------------------------
+    def test_send_prints_when_no_webhook_configured(self, capsys, monkeypatch):
+        from tools.notify import CHANNELS, send
+
+        for env, _name, _b in CHANNELS:
+            monkeypatch.delenv(env, raising=False)
+        assert send({"totals": {}}, [_alert_item()], 100) == []
+        assert "ElevenLabs" in capsys.readouterr().out
+
+    def test_send_dry_run_never_posts(self, capsys, monkeypatch):
+        import tools.notify as n
+
+        monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.example/x")
+        monkeypatch.setattr(
+            n, "httpx", None, raising=False)   # any POST attempt would blow up
+        assert n.send({"totals": {}}, [_alert_item()], 100, dry_run=True) == []
+        assert "ElevenLabs" in capsys.readouterr().out
+
+    def test_send_posts_to_every_configured_channel(self, monkeypatch):
+        import sys
+
+        import tools.notify as n
+
+        posted = []
+
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+        fake = type("M", (), {"post": staticmethod(
+            lambda url, json, timeout: (posted.append((url, json)), _Resp())[1])})
+        monkeypatch.setitem(sys.modules, "httpx", fake)
+        monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack/x")
+        monkeypatch.setenv("GCHAT_WEBHOOK_URL", "https://chat.google/y")
+        monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord/z")
+
+        delivered = n.send({"totals": {}}, [_alert_item()], 100)
+        assert delivered == ["slack", "google chat", "discord"]
+        assert [u for u, _ in posted] == ["https://hooks.slack/x",
+                                          "https://chat.google/y",
+                                          "https://discord/z"]
+        assert "blocks" in posted[0][1]
+        assert "cardsV2" in posted[1][1]
+        assert "embeds" in posted[2][1]
+
+    def test_one_failing_channel_does_not_block_the_others(self, monkeypatch):
+        import sys
+
+        import tools.notify as n
+
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+        def _post(url, json, timeout):
+            if "slack" in url:
+                raise RuntimeError("slack 500")
+            return _Resp()
+
+        monkeypatch.setitem(sys.modules, "httpx",
+                            type("M", (), {"post": staticmethod(_post)}))
+        monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack/x")
+        monkeypatch.setenv("GCHAT_WEBHOOK_URL", "https://chat.google/y")
+        monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+
+        assert n.send({"totals": {}}, [_alert_item()], 100) == ["google chat"]
 
 
 # ---------------------------------------------------------------- M8
+
+def _render(report: dict) -> str:
+    """Render a captured notify.send() call as the plain-text report."""
+    from tools.notify import build_text
+
+    return build_text(report["run_stats"], report["items"],
+                      report["min_volume"])
 
 E2E_CONFIG = {
     "settings": {"country": "us", "gap_threshold": 0.75,
@@ -711,8 +889,10 @@ E2E_CONFIG = {
                  "ahrefs_max_keywords": 50,
                  "embedding_model": "all-MiniLM-L6-v2",
                  "request_timeout": 5, "user_agent": "test"},
-    "murf_taxonomy": TAXONOMY,
-    "murf": {"sitemap": "https://murf.ai/sitemap.xml",
+    "taxonomy": TAXONOMY,
+    "site": {"slug": "acme", "name": "Acme",
+             "description": "an AI voice platform",
+             "sitemap": "https://acme.example/sitemap.xml",
              "include_patterns": [], "exclude_patterns": []},
     "competitors": [{"slug": "elevenlabs", "name": "ElevenLabs",
                      "sitemaps": ["https://elevenlabs.io/sitemap.xml"],
@@ -720,8 +900,8 @@ E2E_CONFIG = {
                      "active": True}],
 }
 
-MURF_SEGMENTS = {"https://murf.ai/tts-guide": {
-    "url": "https://murf.ai/tts-guide", "error": None,
+SITE_SEGMENTS = {"https://acme.example/tts-guide": {
+    "url": "https://acme.example/tts-guide", "error": None,
     "segments": [{"segment_index": 0, "segment_type": "page",
                   "segment_text": "Guide to Text to Speech"}]}}
 
@@ -730,24 +910,28 @@ class TestEndToEnd:
     def _setup(self, monkeypatch, competitor_urls):
         import main as m
 
-        state = {"cards": []}
+        state = {"reports": []}
         monkeypatch.setattr(m, "_load_config", lambda: E2E_CONFIG)
         monkeypatch.setattr(
             m.sitemaps, "fetch_urls",
             lambda sm, *a, **k: pd.DataFrame(
-                {"url": (["https://murf.ai/tts-guide"] if "murf.ai" in sm[0]
+                {"url": (["https://acme.example/tts-guide"] if "acme.example" in sm[0]
                          else competitor_urls),
                  "lastmod": pd.NaT}))
         monkeypatch.setattr(m.extract, "fetch_segments",
-                            lambda urls, *a, **k: [MURF_SEGMENTS[u] for u in urls])
+                            lambda urls, *a, **k: [SITE_SEGMENTS[u] for u in urls])
         monkeypatch.setattr(
             m.extract, "fetch_meta",
             lambda urls, *a, **k: [
                 {"url": u, "title": "New Voice Topic", "h1": "New Voice Topic",
                  "meta_description": "", "error": None,
                  "topic_text": f"New Voice Topic {u}"} for u in urls])
-        monkeypatch.setattr(m.notify, "send",
-                            lambda url, card: state["cards"].append(card))
+        monkeypatch.setattr(
+            m.notify, "send",
+            lambda run_stats, items, min_volume, dry_run=False: (
+                state["reports"].append(
+                    {"run_stats": run_stats, "items": items,
+                     "min_volume": min_volume, "dry_run": dry_run})))
         return m, state
 
     def _args(self, **over):
@@ -768,9 +952,9 @@ class TestEndToEnd:
         assert rc == 0
         assert client.prompts == []
         assert "cm_alerts" not in sb.store or not sb.store["cm_alerts"]
-        assert "No new in-scope content gaps" in json.dumps(state["cards"][0])
-        # murf inventory got populated on first run
-        assert len(sb.store["cm_murf_inventory"]) == 1
+        assert "No new in-scope content gaps" in _render(state["reports"][0])
+        # our own site inventory got populated on first run
+        assert len(sb.store["cm_site_inventory"]) == 1
         baseline = [r for r in sb.store["cm_urls"]
                     if r["competitor_slug"] == "elevenlabs"]
         assert all(r["status"] == "baseline" for r in baseline)
@@ -790,9 +974,9 @@ class TestEndToEnd:
         assert alerts[0]["bucket"] == "gap"
         assert alerts[0]["target_keyword"] == "ai voice generator"
         assert alerts[0]["volume"] is not None   # enriched by stub
-        card_text = json.dumps(state["cards"][0])
-        assert "New Voice Topic" in card_text
-        assert "STUB data" in card_text
+        report = _render(state["reports"][0])
+        assert "New Voice Topic" in report
+        assert "STUB data" in report
         # two runs recorded with stats
         runs = sb.store["cm_runs"]
         assert len(runs) == 2
@@ -814,7 +998,8 @@ class TestEndToEnd:
         assert rc == 0
         assert not sb.store.get("cm_alerts")     # no alert rows
         assert len(sb.store["cm_runs"]) == 2     # run still recorded
-        assert state["cards"]                    # card still built
+        assert state["reports"][0]["dry_run"] is True   # webhooks skipped
+        assert "New Voice Topic" in _render(state["reports"][0])
 
     def test_competitor_failure_isolated(self, monkeypatch):
         sb = FakeSupabase()

@@ -1,14 +1,15 @@
-"""Incremental Murf inventory refresh. Runs before every weekly scan.
+"""Incremental inventory refresh for your own site. Runs before every scan.
 
-1. sitemaps.fetch_urls(config.murf) — Murf's own sitemap, same filters.
-2. diff.detect_new(slug='murf') for new URLs; ALSO re-extract URLs whose
+1. sitemaps.fetch_urls(config.site) — your own sitemap, same filters.
+2. diff.detect_new(slug=config.site.slug) for new URLs; ALSO re-extract
+   URLs whose
    stored segments are missing (recovery from partial failures).
 3. extract.fetch_segments() on that delta only.
 4. For each segment: content_hash = md5(segment_text). Skip embedding if an
    inventory row with same id and content_hash exists.
-5. gap.embed_texts() on changed/new segments, upsert into cm_murf_inventory
+5. gap.embed_texts() on changed/new segments, upsert into cm_site_inventory
    (id = md5(f"{url}|{segment_index}"), embedding as float32 bytes).
-6. Delete inventory rows for URLs that vanished from the Murf sitemap.
+6. Delete inventory rows for URLs that vanished from the sitemap.
 
 Callable as a function from main.py AND runnable standalone:
     python scripts/refresh_inventory.py [--full]   # --full forces re-crawl
@@ -26,7 +27,6 @@ from tools import diff, extract, gap, sitemaps  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-MURF_SLUG = "murf"
 UPSERT_CHUNK = 200          # embeddings are fat rows — smaller chunks
 
 
@@ -40,7 +40,7 @@ def _inventory_state(supabase) -> tuple[set[str], dict[str, str]]:
     hashes: dict[str, str] = {}
     offset, page = 0, 1000
     while True:
-        resp = (supabase.table("cm_murf_inventory")
+        resp = (supabase.table("cm_site_inventory")
                 .select("id,url,content_hash")
                 .range(offset, offset + page - 1).execute())
         rows = resp.data or []
@@ -54,19 +54,20 @@ def _inventory_state(supabase) -> tuple[set[str], dict[str, str]]:
 
 def refresh(supabase, model, config, full: bool = False) -> dict:
     """Returns {urls_added, segments_embedded, segments_skipped, removed}."""
-    murf_cfg = config["murf"]
+    site_cfg = config["site"]
     settings = config["settings"]
+    site_slug = site_cfg["slug"]
 
     sitemap_df = sitemaps.fetch_urls(
-        [murf_cfg["sitemap"]] if isinstance(murf_cfg["sitemap"], str)
-        else murf_cfg["sitemap"],
-        murf_cfg.get("include_patterns") or [],
-        murf_cfg.get("exclude_patterns") or [],
+        [site_cfg["sitemap"]] if isinstance(site_cfg["sitemap"], str)
+        else site_cfg["sitemap"],
+        site_cfg.get("include_patterns") or [],
+        site_cfg.get("exclude_patterns") or [],
         settings["user_agent"],
     )
     sitemap_urls = set(sitemap_df["url"])
 
-    new_items = diff.detect_new(supabase, MURF_SLUG, sitemap_df)
+    new_items = diff.detect_new(supabase, site_slug, sitemap_df)
     inv_urls, inv_hashes = _inventory_state(supabase)
 
     if full:
@@ -106,14 +107,14 @@ def refresh(supabase, model, config, full: bool = False) -> dict:
             for p, v in zip(pending, vecs):
                 p["embedding"] = "\\x" + v.tobytes().hex()   # bytea via REST
             for i in range(0, len(pending), UPSERT_CHUNK):
-                (supabase.table("cm_murf_inventory")
+                (supabase.table("cm_site_inventory")
                  .upsert(pending[i:i + UPSERT_CHUNK]).execute())
             embedded = len(pending)
 
     # prune segments for URLs gone from the sitemap
     removed = 0
     for gone_url in sorted(inv_urls - sitemap_urls):
-        (supabase.table("cm_murf_inventory").delete()
+        (supabase.table("cm_site_inventory").delete()
          .eq("url", gone_url).execute())
         removed += 1
 

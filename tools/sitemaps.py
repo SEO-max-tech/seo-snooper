@@ -1,4 +1,4 @@
-"""Fetch and filter competitor (and Murf) sitemap URLs.
+"""Fetch and filter sitemap URLs (competitors and your own site).
 
 Uses advertools.sitemap_to_df — handles sitemap indexes, gzip, and news
 sitemaps transparently. Filtering (include/exclude regexes from config)

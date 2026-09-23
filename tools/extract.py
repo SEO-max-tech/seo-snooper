@@ -3,7 +3,7 @@
 Two modes — the asymmetry is deliberate (see CLAUDE.md):
 - competitor mode: title + h1 (+ meta description if present). ONE topic
   string per URL: f"{title} — {h1}".
-- inventory mode (Murf): title + h1 as the 'page' segment, plus one
+- inventory mode (own site): title + h1 as the 'page' segment, plus one
   'section' segment per h2 with its h3s appended ("H2: h3a / h3b").
 
 Per-URL isolation: one failed fetch returns an error record, never raises.

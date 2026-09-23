@@ -1,19 +1,39 @@
-# competitor-monitor configuration
+# ─────────────────────────────────────────────────────────────────────────
+# SEO Snooper configuration
+#
+# This ships as a COMPLETE WORKING EXAMPLE monitoring the AI-voice vertical.
+# To use it for your own site, change the `site:` block and `taxonomy:`
+# block to describe your product, then replace the `competitors:` list.
+#
 # Secrets do NOT live here — see .env.example
+# ─────────────────────────────────────────────────────────────────────────
 
 settings:
-  country: us                 # Ahrefs keyword country
-  gap_threshold: 0.75         # below = gap
+  country: us                 # keyword-metrics country code
+  gap_threshold: 0.75         # cosine below this = "gap" (we don't cover it)
   partial_threshold: 0.85     # gap..partial = "partially covered"
-  min_volume: 100             # keywords below this go to collapsed footer
+  min_volume: 100             # keywords below this go to a collapsed footer
   ahrefs_max_keywords: 50     # per-run credit guard
   embedding_model: all-MiniLM-L6-v2
   request_timeout: 20
   user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
-# Injected into the scope-judge prompt. Edit this when Murf ships/sunsets
-# a product — never edit prompts/scope_judge.md for taxonomy changes.
-murf_taxonomy:
+# ─── YOUR SITE ───────────────────────────────────────────────────────────
+# The site being defended. Its sitemap is crawled, embedded, and used as
+# the "do we already cover this?" reference corpus.
+site:
+  slug: murf                  # stable storage key — changing it re-baselines
+  name: Murf                  # injected into the scope-judge prompt
+  description: an AI voice platform
+  sitemap: https://murf.ai/public-assets/sitemaps/sitemap.xml
+  include_patterns: []        # empty = all
+  exclude_patterns:
+    - "/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"
+
+# ─── PRODUCT SCOPE ───────────────────────────────────────────────────────
+# Injected into prompts/scope_judge.md at runtime. Edit this when you ship
+# or sunset a product — never edit the prompt file for taxonomy changes.
+taxonomy:
   in_scope:
     - text to speech (TTS) / AI voice generator
     - voice cloning
@@ -27,7 +47,6 @@ murf_taxonomy:
     - AI Phone Agent
     - AI Calling
     - AI dubbing / localization
-    - voice changer
     - AI voiceover for video, ads, e-learning, IVR
     - speech-to-text adjacent workflows where voice output is the product
   out_of_scope:
@@ -36,13 +55,8 @@ murf_taxonomy:
     - music generation
     - sound effects generation
 
-murf:
-  sitemap: https://murf.ai/public-assets/sitemaps/sitemap.xml
-  include_patterns: []        # empty = all
-  exclude_patterns:
-    - "/(de|fr|es|it|pt|ja|ko|zh|hi|nl)/"
-
-# Shared exclude set — anchor reused by every competitor below.
+# ─── COMPETITORS ─────────────────────────────────────────────────────────
+# Shared exclude set — YAML anchor reused by every competitor below.
 # Strips case studies, changelogs, careers/events, and localized paths.
 default_excludes: &default_excludes
   - "/customers?/"
@@ -65,7 +79,7 @@ competitors:
     name: Bland AI
     sitemaps:
       - https://www.bland.ai/sitemap-blog.xml
-    include_patterns: ["/blog/"]    # blog only — rest is integration/solution noise
+    include_patterns: ["/blog/"]    # blog only — rest is integration noise
     exclude_patterns: *default_excludes
     active: true
 

@@ -2,8 +2,8 @@
 
 One call per gap/partial URL. Model from env JUDGE_MODEL (default
 claude-haiku-4-5). Prompt template: prompts/scope_judge.md, with the
-murf_taxonomy block from config.yaml injected — taxonomy NEVER lives in
-the prompt file.
+`site` and `taxonomy` blocks from config.yaml injected — brand identity
+and taxonomy NEVER live in the prompt file.
 
 Output contract (strict JSON, retry ONCE on malformed):
 {in_scope: bool, reason: str, target_keyword: str,
@@ -33,16 +33,24 @@ FAIL_OPEN = {
 }
 
 
-def build_prompt(taxonomy: dict, item: dict) -> str:
-    """Render prompts/scope_judge.md with taxonomy + item fields injected."""
+def build_prompt(site: dict, taxonomy: dict, item: dict) -> str:
+    """Render prompts/scope_judge.md with brand, taxonomy and item injected.
+
+    `site` is the config.yaml `site:` block — only `name` and `description`
+    are read here, so the prompt file stays brand-agnostic.
+    """
     template = PROMPT_PATH.read_text()
+    brand_name = site.get("name") or site.get("slug", "the site")
+    brand_description = site.get("description", "a software company")
     in_scope = "\n".join(f"- {t}" for t in taxonomy["in_scope"])
     out_of_scope = "\n".join(f"- {t}" for t in taxonomy["out_of_scope"])
     nearest = item.get("nearest_segment_text")
     nearest_context = (
-        f"\nNearest existing Murf content: {nearest}" if nearest and
+        f"\nNearest existing {brand_name} content: {nearest}" if nearest and
         item.get("bucket") == "partial" else "")
     return (template
+            .replace("{brand_name}", brand_name)
+            .replace("{brand_description}", brand_description)
             .replace("{in_scope_taxonomy}", in_scope)
             .replace("{out_of_scope_taxonomy}", out_of_scope)
             .replace("{topic_text}", item["topic_text"])
@@ -75,14 +83,15 @@ def _parse(raw: str) -> dict | None:
              "suggested_page_type", "confidence")}
 
 
-def evaluate(client, model: str, taxonomy: dict, item: dict) -> dict:
+def evaluate(client, model: str, site: dict, taxonomy: dict,
+             item: dict) -> dict:
     """item: {topic_text, url, bucket, nearest_segment_text}.
     Returns the JSON contract above plus the original item fields.
     On double JSON failure: in_scope=True, confidence='low',
     reason='judge_parse_failure' — fail open, let the human filter.
     Accept `client` as a parameter so smoke tests can pass a lambda mock.
     """
-    prompt = build_prompt(taxonomy, item)
+    prompt = build_prompt(site, taxonomy, item)
     verdict = None
     for attempt in (1, 2):
         resp = client.messages.create(

@@ -1,10 +1,14 @@
 name: weekly-competitor-scan
+
+# Sundays at 02:30 UTC. Trigger manually once with dry_run checked to lay
+# the baseline and confirm credentials before letting the cron take over.
 on:
   schedule:
     - cron: "30 2 * * 0"   # Sunday 02:30 UTC = 08:00 IST
   workflow_dispatch:
     inputs:
       dry_run:
+        description: "Skip webhooks and alert rows"
         type: boolean
         default: false
 
@@ -31,6 +35,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           JUDGE_MODEL: claude-haiku-4-5
           AHREFS_API_KEY: ${{ secrets.AHREFS_API_KEY }}
+          # Set whichever webhooks you use — unset ones are skipped.
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           GCHAT_WEBHOOK_URL: ${{ secrets.GCHAT_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           python main.py ${{ inputs.dry_run && '--dry-run' || '' }}

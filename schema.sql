@@ -3,7 +3,7 @@
 
 create table if not exists cm_urls (
   id text primary key,                      -- md5(competitor_slug || '|' || url)
-  competitor_slug text not null,            -- 'murf' is a valid slug here too
+  competitor_slug text not null,            -- your own site's slug lives here too
   url text not null,
   first_seen timestamptz not null default now(),
   last_seen timestamptz not null default now(),
@@ -12,7 +12,7 @@ create table if not exists cm_urls (
 );
 create index if not exists cm_urls_competitor_idx on cm_urls (competitor_slug);
 
-create table if not exists cm_murf_inventory (
+create table if not exists cm_site_inventory (
   id text primary key,                      -- md5(url || '|' || segment_index)
   url text not null,
   segment_type text not null,               -- 'page' (title+h1) | 'section' (h2+h3s)
@@ -21,7 +21,7 @@ create table if not exists cm_murf_inventory (
   embedding bytea not null,                 -- np.float32[384], all-MiniLM-L6-v2
   updated_at timestamptz not null default now()
 );
-create index if not exists cm_inventory_url_idx on cm_murf_inventory (url);
+create index if not exists cm_inventory_url_idx on cm_site_inventory (url);
 
 create table if not exists cm_runs (
   id bigint generated always as identity primary key,
@@ -39,7 +39,7 @@ create table if not exists cm_alerts (
   topic_title text,
   bucket text not null,                     -- gap | partial
   similarity real,
-  nearest_murf_url text,
+  nearest_site_url text,
   target_keyword text,
   volume int,
   keyword_difficulty int,
